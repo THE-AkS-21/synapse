@@ -69,30 +69,30 @@ A simple WebSocket server can only send messages to clients it is *directly* con
 
 ### Build and run all services
 ```bash
-         docker-compose up --build
+  docker-compose up --build
 ```
 
 ### Run in background
 ```bash
-         docker-compose up -d
+  docker-compose up -d
 ```
 
 ### View logs
 ```bash
-         docker-compose logs -f [service-name]
+  docker-compose logs -f [service-name]
 ```
 
 ### Stop all services
 ```bash
-         docker-compose down
+  docker-compose down
 ```
 
 ### Stop and remove volumes
 ```bash
-         docker-compose down -v
+  docker-compose down -v
 ```
 
 ### Rebuild specific service
 ```bash
-         docker-compose up --build [service-name]
+  docker-compose up --build [service-name]
 ```

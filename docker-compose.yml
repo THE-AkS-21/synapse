@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database Service
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: synapse-postgres
+    # Read variables directly from the .env file
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${DB_PORT:-5432}:5432" # Use .env variable with a default
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Redis Cache Service
+  redis-db:
+    image: redis:7-alpine
+    container_name: synapse-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379" # Use .env variable with a default
+    volumes:
+      - redis_data:/data
+
+  # 3. Your Spring Boot Application
+  app:
+    container_name: synapse-app
+    build: .
+    ports:
+      - "8080:8080"
+    # Load all variables from the .env file
+    env_file:
+      - ./.env
+    # Set/Override variables specifically for the container environment
+    environment:
+      # Override hosts to use container names
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/${POSTGRES_DB}
+      spring.data.redis.host: redis-db # Use 'spring.data.redis.host'
+
+      # These are inherited from the .env file
+      # - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      # - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      # - spring.data.redis.port=${REDIS_PORT}
+      # - JWT_SECRET=${JWT_SECRET}
+      # - JWT_EXPIRATION=${JWT_EXPIRATION}
+    depends_on:
+      - postgres-db
+      - redis-db
+
+# Define the volumes to persist data
+volumes:
+  postgres_data:
+  redis_data:

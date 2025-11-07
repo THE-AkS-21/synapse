@@ -49,6 +49,27 @@ A simple WebSocket server can only send messages to clients it is *directly* con
 
 ## Local Development
 
+#### Environmental Variables
+```text
+# PostgreSQL Settings
+# These are used by both the 'postgres-db' and 'app' services in docker-compose
+POSTGRES_DB=synapse_chat
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=password
+
+# Spring App Settings
+# These are read by Spring Boot when you run locally (./mvnw spring-boot:run)
+# They are ALSO read by docker-compose, but some are overridden (like hosts)
+DB_HOST=localhost
+DB_PORT=5432
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# JWT Settings
+JWT_SECRET=your-new-super-strong-base64-encoded-secret-key-goes-here
+JWT_EXPIRATION=86400000
+
+```
 #### Backend Setup
 1. **Install the Dependencies**
 ```bash

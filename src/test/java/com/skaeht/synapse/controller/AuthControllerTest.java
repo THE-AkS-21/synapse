@@ -1,0 +1,96 @@
+
+package com.skaeht.synapse.controller;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.skaeht.synapse.dto.LoginRequest;
+import com.skaeht.synapse.dto.RegisterRequest;
+import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.repository.UserRepository;
+import com.skaeht.synapse.security.JwtTokenProvider;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.Optional;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(AuthController.class)
+@ActiveProfiles("test")
+class AuthControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @MockBean
+    private AuthenticationManager authenticationManager;
+    @MockBean
+    private UserRepository userRepository;
+    @MockBean
+    private PasswordEncoder passwordEncoder;
+    @MockBean
+    private JwtTokenProvider jwtTokenProvider;
+    @MockBean
+    private com.skaeht.synapse.security.UserDetailsServiceImpl userDetailsService;
+    @MockBean
+    private com.skaeht.synapse.security.JwtAuthFilter jwtAuthFilter;
+
+    @Test
+    void testRegisterUser_Success() throws Exception {
+        RegisterRequest req = new RegisterRequest("testuser", "password123", "test@test.com");
+
+        when(userRepository.findByUsername("testuser")).thenReturn(Optional.empty());
+        when(passwordEncoder.encode("password123")).thenReturn("encodedPassword");
+        when(userRepository.save(any(User.class))).thenReturn(new User());
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void testRegisterUser_UsernameTaken() throws Exception {
+        RegisterRequest req = new RegisterRequest("testuser", "password123", "test@test.com");
+
+        when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(new User()));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void testLoginUser_Success() throws Exception {
+        LoginRequest req = new LoginRequest("testuser", "password123");
+        String testToken = "test.jwt.token";
+
+        Authentication auth = mock(Authentication.class);
+        when(authenticationManager.authenticate(any())).thenReturn(auth);
+        when(jwtTokenProvider.generateToken(auth)).thenReturn(testToken);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").value(testToken))
+                .andExpect(jsonPath("$.username").value("testuser"));
+    }
+}

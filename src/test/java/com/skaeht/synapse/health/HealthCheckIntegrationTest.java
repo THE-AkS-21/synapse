@@ -10,6 +10,12 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import javax.sql.DataSource;
+import com.skaeht.synapse.repository.UserRepository;
+import com.skaeht.synapse.repository.MessageRepository;
+import com.skaeht.synapse.repository.RoomRepository;
+import org.redisson.api.RedissonClient;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -29,6 +35,21 @@ class HealthCheckIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private UserRepository userRepository;
+
+    @MockitoBean
+    private MessageRepository messageRepository;
+
+    @MockitoBean
+    private RoomRepository roomRepository;
+
+    @MockitoBean
+    private RedissonClient redissonClient;
+
+    @MockitoBean
+    private DataSource dataSource;
 
     @Test
     void testHealthEndpoint() throws Exception {

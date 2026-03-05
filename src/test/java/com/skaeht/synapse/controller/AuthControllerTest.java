@@ -9,8 +9,9 @@ import com.skaeht.synapse.repository.UserRepository;
 import com.skaeht.synapse.security.JwtTokenProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.skaeht.synapse.service.UserService;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -38,18 +39,20 @@ class AuthControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private AuthenticationManager authenticationManager;
-    @MockBean
+    @MockitoBean
     private UserRepository userRepository;
-    @MockBean
+    @MockitoBean
     private PasswordEncoder passwordEncoder;
-    @MockBean
+    @MockitoBean
     private JwtTokenProvider jwtTokenProvider;
-    @MockBean
+    @MockitoBean
     private com.skaeht.synapse.security.UserDetailsServiceImpl userDetailsService;
-    @MockBean
+    @MockitoBean
     private com.skaeht.synapse.security.JwtAuthFilter jwtAuthFilter;
+    @MockitoBean
+    private UserService userService;
 
     @Test
     void testRegisterUser_Success() throws Exception {
@@ -60,8 +63,8 @@ class AuthControllerTest {
         when(userRepository.save(any(User.class))).thenReturn(new User());
 
         mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated());
     }
 
@@ -72,8 +75,8 @@ class AuthControllerTest {
         when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(new User()));
 
         mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -87,8 +90,8 @@ class AuthControllerTest {
         when(jwtTokenProvider.generateToken(auth)).thenReturn(testToken);
 
         mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").value(testToken))
                 .andExpect(jsonPath("$.username").value("testuser"));

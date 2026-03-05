@@ -5,10 +5,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+
+import java.util.Set;
 
 /**
  * Listener for WebSocket connection/disconnection events.
@@ -21,6 +24,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 public class WebSocketEventListener {
 
     private final PresenceService presenceService;
+    private final StringRedisTemplate redisTemplate;
 
     /**
      * Handle WebSocket connection event
@@ -45,15 +49,18 @@ public class WebSocketEventListener {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         String sessionId = accessor.getSessionId();
 
-        Object principal = accessor.getUser();
-        if (principal != null) {
-            String userId = principal.toString();
+        if (accessor.getUser() != null) {
+            String userId = accessor.getUser().getName();
 
             log.info("WebSocket session disconnected: {} (user: {})", sessionId, userId);
 
-            // In a full implementation, we'd fetch all rooms the user was in
-            // and call presenceService.userLeftRoom() for each
-            // For now, client should send explicit leave messages
+            // Fetch all rooms this user is active in from Redis
+            Set<String> activeRooms = redisTemplate.opsForSet().members("user:" + userId + ":rooms");
+            if (activeRooms != null) {
+                for (String roomId : activeRooms) {
+                    presenceService.userLeftRoom(userId, roomId); // Broadcasts OFFLINE to the room
+                }
+            }
         } else {
             log.info("WebSocket session disconnected: {} (anonymous)", sessionId);
         }

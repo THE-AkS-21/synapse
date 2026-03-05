@@ -1,0 +1,136 @@
+package com.skaeht.synapse.service;
+
+import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
+
+/**
+ * Service for managing user-related operations.
+ */
+@Service
+public class UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserService.class);
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    /**
+     * Register a new user.
+     *
+     * @param username    The username
+     * @param email       The email
+     * @param rawPassword The raw password (will be encoded)
+     * @return The created user
+     * @throws IllegalArgumentException if username or email already exists
+     */
+    @Transactional
+    public User registerUser(String username, String email, String rawPassword) {
+        log.info("Registering new user: {}", username);
+
+        // Validate username
+        if (userRepository.existsByUsername(username)) {
+            throw new IllegalArgumentException("Username already exists: " + username);
+        }
+
+        // Validate email
+        if (userRepository.existsByEmail(email)) {
+            throw new IllegalArgumentException("Email already exists: " + email);
+        }
+
+        // Create user
+        User user = User.builder()
+                .username(username)
+                .email(email)
+                .password(passwordEncoder.encode(rawPassword))
+                .build();
+
+        User savedUser = userRepository.save(user);
+        log.info("User registered successfully: {}", username);
+
+        return savedUser;
+    }
+
+    /**
+     * Find user by username with caching.
+     *
+     * @param username The username to search for
+     * @return Optional containing the user if found
+     */
+    @Cacheable(value = "users", key = "#username")
+    public Optional<User> findByUsername(String username) {
+        return userRepository.findByUsername(username);
+    }
+
+    /**
+     * Find user by email.
+     *
+     * @param email The email to search for
+     * @return Optional containing the user if found
+     */
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
+    }
+
+    /**
+     * Check if username exists.
+     *
+     * @param username The username to check
+     * @return true if exists, false otherwise
+     */
+    public boolean usernameExists(String username) {
+        return userRepository.existsByUsername(username);
+    }
+
+    /**
+     * Check if email exists.
+     *
+     * @param email The email to check
+     * @return true if exists, false otherwise
+     */
+    public boolean emailExists(String email) {
+        return userRepository.existsByEmail(email);
+    }
+
+    /**
+     * Get total user count.
+     *
+     * @return Total number of registered users
+     */
+    public long getTotalUserCount() {
+        return userRepository.count();
+    }
+
+    /**
+     * Update user password.
+     *
+     * @param username    The username
+     * @param newPassword The new password (raw)
+     * @return true if updated successfully
+     */
+    @Transactional
+    public boolean updatePassword(String username, String newPassword) {
+        Optional<User> userOpt = userRepository.findByUsername(username);
+
+        if (userOpt.isPresent()) {
+            User user = userOpt.get();
+            user.setPassword(passwordEncoder.encode(newPassword));
+            userRepository.save(user);
+            log.info("Password updated for user: {}", username);
+            return true;
+        }
+
+        return false;
+    }
+}

@@ -52,7 +52,8 @@ class ChatIntegrationTest {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
-        registry.add("jwt.secret", () -> "test-secret-key-for-jwt-token-provider-integration-tests-should-be-at-least-256-bits-long");
+        registry.add("jwt.secret",
+                () -> "test-secret-key-for-jwt-token-provider-integration-tests-should-be-at-least-256-bits-long");
         registry.add("jwt.expiration", () -> "3600000");
     }
 
@@ -72,8 +73,7 @@ class ChatIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         this.stompClient = new WebSocketStompClient(new SockJsClient(
-                List.of(new WebSocketTransport(new StandardWebSocketClient()))
-        ));
+                List.of(new WebSocketTransport(new StandardWebSocketClient()))));
         this.stompClient.setMessageConverter(new MappingJackson2MessageConverter());
 
         RegisterRequest registerRequest = new RegisterRequest(username, "password123", username + "@test.com");
@@ -82,8 +82,7 @@ class ChatIntegrationTest {
         ResponseEntity<AuthResponse> loginResponse = restTemplate.postForEntity(
                 "/api/auth/login",
                 new LoginRequest(username, "password123"),
-                AuthResponse.class
-        );
+                AuthResponse.class);
 
         assertNotNull(loginResponse.getBody(), "Login response should not be null");
         jwtToken = loginResponse.getBody().token();
@@ -107,24 +106,26 @@ class ChatIntegrationTest {
                 new StompSessionHandlerAdapter() {
                     @Override
                     public void afterConnected(StompSession session, StompHeaders connectedHeaders) {
-                        session.subscribe("/topic/public", new StompFrameHandler() {
+                        // Updated to subscribe to room-specific topic
+                        session.subscribe("/topic/chat/general", new StompFrameHandler() {
                             @Override
                             public Type getPayloadType(StompHeaders headers) {
                                 return ChatMessage.class;
                             }
+
                             @Override
                             public void handleFrame(StompHeaders headers, Object payload) {
                                 messageQueue.add((ChatMessage) payload);
                             }
                         });
                     }
-                }
-        ).get(5, TimeUnit.SECONDS);
+                }).get(5, TimeUnit.SECONDS);
 
         // Give subscription time to register
         Thread.sleep(500);
 
-        ChatMessage messageToSend = new ChatMessage(null, "Hello, World!", 0L);
+        // Send to the updated endpoint with room-based routing
+        ChatMessage messageToSend = new ChatMessage("general", username, "Hello, World!", System.currentTimeMillis());
         session.send("/app/chat.sendMessage", messageToSend);
 
         ChatMessage receivedMessage = messageQueue.poll(10, TimeUnit.SECONDS);

@@ -1,54 +1,63 @@
 package com.skaeht.synapse.controller;
 
 import com.skaeht.synapse.dto.ChatMessage;
-import com.skaeht.synapse.entity.Message;
-import com.skaeht.synapse.repository.MessageRepository;
-import com.skaeht.synapse.service.RedisPublisher; // <-- IMPORT THIS
+import com.skaeht.synapse.service.ChatService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
-// import org.springframework.messaging.handler.annotation.SendTo; // <-- REMOVE THIS
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
 
+/**
+ * WebSocket controller for handling chat messages with room-based routing.
+ * Supports sending messages to specific rooms and direct messages.
+ */
 @Controller
+@Slf4j
 public class ChatController {
 
     @Autowired
-    private MessageRepository messageRepository;
+    private ChatService chatService;
 
-    // --- ADD THIS ---
-    @Autowired
-    private RedisPublisher redisPublisher;
+    /**
+     * Handle messages sent to a specific room.
+     * WebSocket destination: /app/room/{roomId}
+     * 
+     * @param roomId      The target room ID
+     * @param chatMessage The message payload
+     * @param principal   The authenticated user
+     */
+    @MessageMapping("/room/{roomId}")
+    public void sendToRoom(
+            @DestinationVariable String roomId,
+            @Payload ChatMessage chatMessage,
+            Principal principal) {
 
-    @MessageMapping("/chat.sendMessage")
-    // --- REMOVE @SendTo ---
-    // @SendTo("/topic/public")
-    public void sendMessage(@Payload ChatMessage chatMessage, Principal principal) {
+        String username = principal != null ? principal.getName() : chatMessage.from();
 
-        String username = principal.getName();
+        log.info("User {} sending message to room {}", username, roomId);
 
-        ChatMessage messageToSaveAndSend = new ChatMessage(
-                username,
-                chatMessage.content(),
-                System.currentTimeMillis()
-        );
+        // Send message via service (async)
+        chatService.sendMessage(chatMessage.content(), username, roomId);
+    }
 
-        // 1. Save to database
-        Message dbMessage = Message.builder()
-                .senderUsername(messageToSaveAndSend.from())
-                .content(messageToSaveAndSend.content())
-                .timestamp(messageToSaveAndSend.timestamp())
-                .build();
+    /**
+     * Handle messages sent to the default/general room.
+     * WebSocket destination: /app/chat
+     * 
+     * @param chatMessage The message payload
+     * @param principal   The authenticated user
+     */
+    @MessageMapping("/chat")
+    public void send(@Payload ChatMessage chatMessage, Principal principal) {
+        String username = principal != null ? principal.getName() : chatMessage.from();
 
-        messageRepository.save(dbMessage);
+        log.info("User {} sending message to general room", username);
 
-        // 2. Publish to Redis
-        // This will be picked up by all server instances
-        redisPublisher.publish(messageToSaveAndSend);
-
-        // We no longer return the message here
-        // return messageToSaveAndSend; // <-- REMOVE THIS
+        // Send to default "general" room
+        chatService.sendMessage(chatMessage.content(), username);
     }
 }

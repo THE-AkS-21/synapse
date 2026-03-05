@@ -13,6 +13,7 @@ import com.skaeht.synapse.service.UserService;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
+import com.skaeht.synapse.config.SecurityConfig;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
@@ -30,6 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AuthController.class)
+@Import({ SecurityConfig.class, com.skaeht.synapse.security.JwtAuthFilter.class })
 @ActiveProfiles("test")
 class AuthControllerTest {
 
@@ -50,17 +52,14 @@ class AuthControllerTest {
     @MockitoBean
     private com.skaeht.synapse.security.UserDetailsServiceImpl userDetailsService;
     @MockitoBean
-    private com.skaeht.synapse.security.JwtAuthFilter jwtAuthFilter;
-    @MockitoBean
     private UserService userService;
 
     @Test
     void testRegisterUser_Success() throws Exception {
         RegisterRequest req = new RegisterRequest("testuser", "password123", "test@test.com");
+        User mockUser = new User();
 
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.empty());
-        when(passwordEncoder.encode("password123")).thenReturn("encodedPassword");
-        when(userRepository.save(any(User.class))).thenReturn(new User());
+        when(userService.registerUser("testuser", "test@test.com", "password123")).thenReturn(mockUser);
 
         mockMvc.perform(post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -72,7 +71,8 @@ class AuthControllerTest {
     void testRegisterUser_UsernameTaken() throws Exception {
         RegisterRequest req = new RegisterRequest("testuser", "password123", "test@test.com");
 
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(new User()));
+        when(userService.registerUser("testuser", "test@test.com", "password123"))
+                .thenThrow(new IllegalArgumentException("Username is already taken!"));
 
         mockMvc.perform(post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)

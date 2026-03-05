@@ -12,6 +12,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import javax.sql.DataSource;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import com.skaeht.synapse.repository.UserRepository;
 import com.skaeht.synapse.repository.MessageRepository;
 import com.skaeht.synapse.repository.RoomRepository;
@@ -50,6 +52,12 @@ class HealthCheckIntegrationTest {
 
     @MockitoBean
     private DataSource dataSource;
+
+    @MockitoBean
+    private RedisConnectionFactory redisConnectionFactory;
+
+    @MockitoBean
+    private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
 
     @Test
     void testHealthEndpoint() throws Exception {

@@ -147,6 +147,12 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+
+		<dependency>
+			<groupId>me.paulschwarz</groupId>
+			<artifactId>spring-dotenv</artifactId>
+			<version>4.0.0</version>
+		</dependency>
         
         <!-- Spring Boot Actuator for health checks and metrics -->
         <dependency>
@@ -161,10 +167,6 @@
         </dependency>
         
         <!-- Cache support with Caffeine -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-cache</artifactId>
-        </dependency>
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>

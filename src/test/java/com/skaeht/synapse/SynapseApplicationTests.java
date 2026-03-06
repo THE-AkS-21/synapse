@@ -44,6 +44,9 @@ class SynapseApplicationTests {
     @MockitoBean
     private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
 
+    @MockitoBean
+    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
     @Test
     void contextLoads() {
     }

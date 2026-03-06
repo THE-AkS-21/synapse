@@ -1,4 +1,6 @@
 singleServerConfig:
-  address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+  address: "rediss://${REDIS_HOST}"
+  password: ${REDIS_PASSWORD}
   connectionPoolSize: 50
   connectionMinimumIdleSize: 10
+  sslEnableEndpointIdentification: false

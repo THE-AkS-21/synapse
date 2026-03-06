@@ -43,20 +43,32 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
 
-        // 1. Authenticate the user (checks password)
+        // 1️⃣ Find user using email
+        var userOptional = userService.findByEmail(loginRequest.email());
+
+        if (userOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(new AuthResponse(null, "Invalid email or password"));
+        }
+
+        var user = userOptional.get();
+
+        // 2️⃣ Authenticate using username internally
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
-                        loginRequest.username(),
-                        loginRequest.password()));
+                        user.getUsername(),
+                        loginRequest.password()
+                )
+        );
 
-        // 2. Set the authentication in the security context
+        // 3️⃣ Set authentication
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        // 3. Generate the JWT
+        // 4️⃣ Generate JWT
         String jwt = jwtTokenProvider.generateToken(authentication);
 
-        // 4. Send response
-        return ResponseEntity.ok(new AuthResponse(jwt, loginRequest.username()));
+        // 5️⃣ Return token + username
+        return ResponseEntity.ok(new AuthResponse(jwt, user.getUsername()));
     }
 
     /**

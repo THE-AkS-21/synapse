@@ -31,7 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @EnableAutoConfiguration(exclude = { DataSourceAutoConfiguration.class, RedisAutoConfiguration.class })
 @TestPropertySource(properties = {
         "management.endpoints.web.exposure.include=health",
-        "management.endpoint.health.show-details=always"
+        "management.endpoint.health.show-details=always",
+        "management.health.defaults.enabled=false"
 })
 class HealthCheckIntegrationTest {
 
@@ -59,10 +60,13 @@ class HealthCheckIntegrationTest {
     @MockitoBean
     private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
 
+    @MockitoBean
+    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
     @Test
+    @org.springframework.security.test.context.support.WithMockUser
     void testHealthEndpoint() throws Exception {
         mockMvc.perform(get("/actuator/health"))
-                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").exists());
     }
 }

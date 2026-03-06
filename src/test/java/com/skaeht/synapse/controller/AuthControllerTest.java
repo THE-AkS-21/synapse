@@ -82,8 +82,14 @@ class AuthControllerTest {
 
     @Test
     void testLoginUser_Success() throws Exception {
-        LoginRequest req = new LoginRequest("testuser", "password123");
+        LoginRequest req = new LoginRequest("test@test.com", "password123");
         String testToken = "test.jwt.token";
+
+        User mockUser = new User();
+        mockUser.setUsername("testuser");
+        mockUser.setEmail("test@test.com");
+
+        when(userService.findByEmail("test@test.com")).thenReturn(Optional.of(mockUser));
 
         Authentication auth = mock(Authentication.class);
         when(authenticationManager.authenticate(any())).thenReturn(auth);

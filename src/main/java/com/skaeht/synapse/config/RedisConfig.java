@@ -15,6 +15,8 @@ import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.util.concurrent.Executors;
+
 /**
  * Redis configuration for room-based pub/sub messaging.
  * Uses pattern-based subscriptions to handle dynamic room channels.
@@ -43,9 +45,14 @@ public class RedisConfig {
             PatternTopic patternTopic) {
 
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+
         container.setConnectionFactory(connectionFactory);
 
-        // Add listener for pattern-based subscription (all room channels)
+        // Improve concurrency for pub/sub
+        container.setTaskExecutor(Executors.newCachedThreadPool());
+        container.setSubscriptionExecutor(Executors.newCachedThreadPool());
+
+        // Subscribe to all chat rooms
         container.addMessageListener(listenerAdapter, patternTopic);
 
         return container;

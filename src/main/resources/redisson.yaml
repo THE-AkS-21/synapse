@@ -1,5 +1,16 @@
 singleServerConfig:
-  address: "${REDIS_URL}"
-  connectionPoolSize: 50
+  address: "${REDIS_ADDRESS}"
+  username: "default"
+  password: "${REDIS_PASSWORD}"
+
+  connectionPoolSize: 64
   connectionMinimumIdleSize: 10
-  sslEnableEndpointIdentification: false
+
+  connectTimeout: 10000
+  timeout: 10000
+
+  retryAttempts: 3
+  retryInterval: 1500
+
+threads: 16
+nettyThreads: 32

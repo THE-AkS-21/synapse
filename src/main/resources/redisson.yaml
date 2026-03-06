@@ -1,5 +1,5 @@
 singleServerConfig:
-  address: "rediss://honest-moray-3883.upstash.io:6379"
+  address: "${REDIS_ADDRESS}"
   username: "default"
   password: "${REDIS_PASSWORD}"
 
@@ -14,32 +14,3 @@ singleServerConfig:
 
 threads: 16
 nettyThreads: 32
-#singleServerConfig:
-#  address: "rediss://honest-moray-3883.upstash.io:6379"
-#  password: "AQ8rAAImcDE5OTNmMGViYzE2NGY0YTEyOGUwZTk4ODcwOGEzNmQzOHAxMzg4Mw"
-#  connectionMinimumIdleSize: 10
-#  connectionPoolSize: 50
-#  timeout: 10000
-#  retryAttempts: 3
-#  retryInterval: 1500
-#
-#threads: 4
-#nettyThreads: 4
-
-#singleServerConfig:
-#  address: "${REDIS_URL}"
-#  sslEnableEndpointIdentification: false
-#  connectionPoolSize: 50
-#  connectionMinimumIdleSize: 10
-#  timeout: 10000
-#  connectTimeout: 10000
-#threads: 4
-#nettyThreads: 4
-
-#singleServerConfig:
-#  address: "${REDIS_URL:redis://localhost:6379}"
-#  password: "${REDIS_PASSWORD:null}"
-#  sslEnableEndpointIdentification: false
-#  connectionPoolSize: 50
-#  connectionMinimumIdleSize: 10
-#  timeout: 10000

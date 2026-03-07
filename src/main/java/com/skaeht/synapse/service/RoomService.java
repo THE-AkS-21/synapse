@@ -35,7 +35,7 @@ public class RoomService {
      * Create a new room
      */
     @Transactional
-    public Room createRoom(String name, Room.RoomType type) {
+    public Room createRoom(String name, Room.RoomType type, String creatorUsername) {
         if (roomRepository.existsByName(name)) {
             throw new IllegalArgumentException("Room with name '" + name + "' already exists");
         }
@@ -46,8 +46,14 @@ public class RoomService {
                 .type(type)
                 .build();
 
+        if (creatorUsername != null) {
+            User creator = userRepository.findByUsername(creatorUsername)
+                    .orElseThrow(() -> new IllegalArgumentException("Creator user not found"));
+            room.getParticipants().add(creator);
+        }
+
         Room savedRoom = roomRepository.save(room);
-        log.info("Created room: {} (type: {})", name, type);
+        log.info("Created room: {} (type: {}) by {}", name, type, creatorUsername);
         return savedRoom;
     }
 
@@ -173,6 +179,10 @@ public class RoomService {
      */
     public Page<Room> getPublicRooms(int page, int size) {
         return getRoomsByType(Room.RoomType.PUBLIC, page, size);
+    }
+
+    public List<Room> getRoomsForUser(String username) {
+        return roomRepository.findRoomsByUsername(username);
     }
 
     /**

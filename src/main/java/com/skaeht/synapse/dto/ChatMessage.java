@@ -1,5 +1,7 @@
 package com.skaeht.synapse.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.util.UUID;
 
 /**
@@ -13,6 +15,7 @@ import java.util.UUID;
  * @param timestamp Unix timestamp in milliseconds
  * @param traceId   Distributed tracing identifier for debugging
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record ChatMessage(
                 String id,
                 String roomId,

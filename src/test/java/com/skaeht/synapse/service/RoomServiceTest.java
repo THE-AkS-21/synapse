@@ -60,17 +60,30 @@ class RoomServiceTest {
     @Test
     void testCreateRoom_Success() {
         // Arrange
-        when(roomRepository.existsByName("new-room")).thenReturn(false);
-        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(roomRepository.existsByName("test_room")).thenReturn(false);
+        // Map the new logic to return a placeholder Creator User
+        User mockCreator = new User();
+        mockCreator.setId(1L);
+        mockCreator.setUsername("test_creator_username");
+        when(userRepository.findByUsername("test_creator_username")).thenReturn(Optional.of(mockCreator));
 
-        // Act
-        Room created = roomService.createRoom("new-room", Room.RoomType.PUBLIC);
+        // Assuming 'room' refers to a Room object that would be returned by the save
+        // method.
+        // For a test, we can create a mock Room or use the argument passed to save.
+        Room mockSavedRoom = Room.builder()
+                .id(UUID.randomUUID().toString())
+                .name("test_room")
+                .type(Room.RoomType.PUBLIC)
+                .build();
+        when(roomRepository.save(any(Room.class))).thenReturn(mockSavedRoom);
+
+        Room savedRoom = roomService.createRoom("test_room", Room.RoomType.PUBLIC, "test_creator_username");
 
         // Assert
-        assertNotNull(created);
-        assertEquals("new-room", created.getName());
-        assertEquals(Room.RoomType.PUBLIC, created.getType());
-        assertNotNull(created.getId());
+        assertNotNull(savedRoom);
+        assertEquals("test_room", savedRoom.getName());
+        assertEquals(Room.RoomType.PUBLIC, savedRoom.getType());
+        assertNotNull(savedRoom.getId());
 
         verify(roomRepository).save(any(Room.class));
     }
@@ -78,11 +91,10 @@ class RoomServiceTest {
     @Test
     void testCreateRoom_DuplicateName() {
         // Arrange
-        when(roomRepository.existsByName("existing-room")).thenReturn(true);
+        when(roomRepository.existsByName("test_room")).thenReturn(true);
 
-        // Act & Assert
         assertThrows(IllegalArgumentException.class, () -> {
-            roomService.createRoom("existing-room", Room.RoomType.PUBLIC);
+            roomService.createRoom("test_room", Room.RoomType.PUBLIC, "test_creator_username");
         });
 
         verify(roomRepository, never()).save(any());

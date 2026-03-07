@@ -1,55 +1,57 @@
 package com.skaeht.synapse.config;
 
 import com.skaeht.synapse.security.JwtTokenProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
+import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
-import org.springframework.messaging.simp.stomp.StompCommand;
-import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+import org.springframework.messaging.simp.stomp.*;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
+import java.util.Collections;
 
-// in config/WebSocketAuthInterceptor.java
+@Slf4j
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 99) // Run before other interceptors
+@RequiredArgsConstructor
 public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-    @Autowired
-    private UserDetailsService userDetailsService;
+    private final JwtTokenProvider jwtTokenProvider;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
-        StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+
+        StompHeaderAccessor accessor =
+                MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
         if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-            // Get token from "Authorization" header
+
             String authHeader = accessor.getFirstNativeHeader("Authorization");
 
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                String jwt = authHeader.substring(7);
 
-                if (jwtTokenProvider.validateToken(jwt)) {
-                    String username = jwtTokenProvider.getUsernameFromToken(jwt);
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                String token = authHeader.substring(7);
 
-                    // Create Spring Security authentication object
-                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                            userDetails, null, userDetails.getAuthorities()
-                    );
+                if (jwtTokenProvider.validateToken(token)) {
 
-                    // Set the authenticated user for this WebSocket session
+                    String username = jwtTokenProvider.getUsernameFromToken(token);
+
+                    Authentication authentication =
+                            new UsernamePasswordAuthenticationToken(
+                                    username,
+                                    null,
+                                    Collections.emptyList()
+                            );
+
                     accessor.setUser(authentication);
+
+                    log.info("WebSocket authenticated user: {}", username);
                 }
             }
         }
+
         return message;
     }
 }

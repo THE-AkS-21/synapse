@@ -60,4 +60,22 @@ public class ChatController {
         // Send to default "general" room
         chatService.sendMessage(chatMessage.content(), username);
     }
+
+    @MessageMapping("/chat.send")
+    public void sendMessage(
+            ChatMessage message,
+            Principal principal) {
+
+        String username = principal.getName();
+
+        message = new ChatMessage(
+                message.id(),
+                message.roomId(),
+                username,
+                message.content(),
+                message.timestamp(),
+                message.traceId());
+
+        chatService.sendMessage(message.content(), username, message.roomId());
+    }
 }

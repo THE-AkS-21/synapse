@@ -31,6 +31,20 @@ public class RoomService {
     @Autowired
     private UserRepository userRepository;
 
+    private String generateRoomId() {
+        String chars = "0123456789";
+        StringBuilder sb = new StringBuilder(14);
+        java.security.SecureRandom random = new java.security.SecureRandom();
+        for (int i = 0; i < 14; i++) {
+            if (i == 4 || i == 9) {
+                sb.append('-');
+            } else {
+                sb.append(chars.charAt(random.nextInt(chars.length())));
+            }
+        }
+        return sb.toString();
+    }
+
     /**
      * Create a new room
      */
@@ -41,7 +55,7 @@ public class RoomService {
         }
 
         Room room = Room.builder()
-                .id(UUID.randomUUID().toString())
+                .id(generateRoomId())
                 .name(name)
                 .type(type)
                 .build();

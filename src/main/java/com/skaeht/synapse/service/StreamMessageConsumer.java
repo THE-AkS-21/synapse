@@ -28,49 +28,49 @@ public class StreamMessageConsumer {
 
     @Scheduled(fixedDelay = 2000)
     public void consumeMessages() {
+        try {
+            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
+                    Consumer.from(GROUP, CONSUMER),
+                    StreamReadOptions.empty().count(100).block(Duration.ofSeconds(1)),
+                    StreamOffset.create(STREAM, ReadOffset.lastConsumed()));
 
-        List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-                Consumer.from(GROUP, CONSUMER),
-                StreamReadOptions.empty().count(100).block(Duration.ofSeconds(1)),
-                StreamOffset.create(STREAM, ReadOffset.lastConsumed()));
+            if (records == null || records.isEmpty())
+                return;
 
-        if (records == null || records.isEmpty())
-            return;
+            List<Message> batch = new ArrayList<>();
+            List<RecordId> recordIds = new ArrayList<>();
 
-        List<Message> batch = new ArrayList<>();
-        List<RecordId> recordIds = new ArrayList<>();
+            for (MapRecord<String, Object, Object> record : records) {
+                try {
+                    Message message = new Message();
+                    message.setMessageId((String) record.getValue().get("id"));
+                    message.setRoomId((String) record.getValue().get("roomId"));
+                    message.setContent((String) record.getValue().get("content"));
+                    message.setSenderUsername((String) record.getValue().get("from"));
+                    message.setTimestamp(Long.parseLong((String) record.getValue().get("timestamp")));
 
-        for (MapRecord<String, Object, Object> record : records) {
-
-            try {
-
-                Message message = new Message();
-
-                message.setMessageId((String) record.getValue().get("id"));
-                message.setRoomId((String) record.getValue().get("roomId"));
-                message.setContent((String) record.getValue().get("content"));
-                message.setSenderUsername((String) record.getValue().get("from"));
-                message.setTimestamp(Long.parseLong((String) record.getValue().get("timestamp")));
-
-                batch.add(message);
-                recordIds.add(record.getId());
-
-            } catch (Exception e) {
-                log.error("Failed to parse message properties {}", record.getId(), e);
+                    batch.add(message);
+                    recordIds.add(record.getId());
+                } catch (Exception e) {
+                    log.error("Failed to parse message properties {}", record.getId(), e);
+                }
             }
-        }
 
-        if (!batch.isEmpty()) {
-            try {
-                messageRepository.saveAll(batch);
-                log.info("Persisted {} messages to PostgreSQL", batch.size());
+            if (!batch.isEmpty()) {
+                try {
+                    messageRepository.saveAll(batch);
+                    log.info("Persisted {} messages to PostgreSQL", batch.size());
 
-                // Only acknowledge the consumed records AFTER safely putting them in the
-                // database!
-                redisTemplate.opsForStream().acknowledge(STREAM, GROUP, recordIds.toArray(new RecordId[0]));
-            } catch (Exception e) {
-                log.error("Failed to persist message batch to database, aborting acknowledge...", e);
+                    // Only acknowledge the consumed records AFTER safely putting them in the
+                    // database!
+                    redisTemplate.opsForStream().acknowledge(STREAM, GROUP, recordIds.toArray(new RecordId[0]));
+                } catch (Exception e) {
+                    log.error("Failed to persist message batch to database, aborting acknowledge...", e);
+                }
             }
+        } catch (Exception e) {
+            log.debug("Redis connection unavailable for stream consumption (likely test environment or shutdown): {}",
+                    e.getMessage());
         }
     }
 }

@@ -40,11 +40,12 @@ public interface RoomRepository extends JpaRepository<Room, String> {
     boolean existsByName(String name);
 
     @Query("""
-        SELECT r FROM Room r
-        JOIN r.participants p
-        WHERE p.username = :username
-    """)
+                SELECT r FROM Room r
+                JOIN r.participants p
+                WHERE p.username = :username
+            """)
     List<Room> findRoomsByUsername(@Param("username") String username);
+
     /**
      * Find direct message room between two users
      */

@@ -48,7 +48,7 @@ public class RoomService {
      * Create a new room
      */
     @Transactional
-    public Room createRoom(String name, Room.RoomType type, String creatorUsername) {
+    public Room createRoom(String name, Room.RoomType type, Long creatorId) {
         // Only enforce unique rooms names for PUBLIC/PRIVATE (not DIRECT rooms which
         // use internal names)
         if (type != Room.RoomType.DIRECT && roomRepository.existsByName(name)) {
@@ -59,18 +59,17 @@ public class RoomService {
                 .id(generateRoomId())
                 .name(name)
                 .type(type)
-                .creatorUsername(creatorUsername) // display only
+                .creatorId(creatorId)
                 .build();
 
-        if (creatorUsername != null) {
-            User creator = userRepository.findByUsername(creatorUsername)
+        if (creatorId != null) {
+            User creator = userRepository.findById(creatorId)
                     .orElseThrow(() -> new IllegalArgumentException("Creator user not found"));
-            room.setCreatorId(creator.getId()); // stable FK — won't break on username change
             room.getParticipants().add(creator);
         }
 
         Room savedRoom = roomRepository.save(room);
-        log.info("Created room: {} (type: {}) by {} [id={}]", name, type, creatorUsername, room.getCreatorId());
+        log.info("Created room: {} (type: {}) by [id={}]", name, type, room.getCreatorId());
         return savedRoom;
     }
 
@@ -257,12 +256,14 @@ public class RoomService {
      */
     @Transactional
     @CacheEvict(value = "rooms", key = "#roomId")
-    public Room updateTheme(String roomId, String theme, String requestingUsername) {
+    public Room updateTheme(String roomId, String theme, Long requestingUserId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+
+        if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
             throw new IllegalStateException("Only the room creator can change the theme");
         }
+
         room.setTheme(theme);
         return roomRepository.save(room);
     }

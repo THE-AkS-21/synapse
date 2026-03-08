@@ -34,12 +34,22 @@ public class InvitationService {
      * Only the room creator can invite users. Only PRIVATE rooms require
      * invitations.
      */
+    /**
+     * Send a room invitation to a user identified by their display ID.
+     * Only the room creator can invite users. Only PRIVATE rooms require
+     * invitations.
+     */
     @Transactional
     public Invitation sendRoomInvitation(String roomId, String fromUsername, String toDisplayId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
 
-        if (!fromUsername.equals(room.getCreatorUsername())) {
+        // Get the inviting user to compare IDs
+        User fromUser = userRepository.findByUsername(fromUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + fromUsername));
+
+        // Use creatorId for permission check
+        if (room.getCreatorId() != null && !room.getCreatorId().equals(fromUser.getId())) {
             throw new IllegalStateException("Only the room creator can invite members");
         }
 

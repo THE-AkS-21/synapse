@@ -48,7 +48,7 @@ public class AuthController {
 
         if (userOptional.isEmpty()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new AuthResponse(null, "Invalid email or password"));
+                    .body(new AuthResponse(null, "Invalid email or password", null));
         }
 
         var user = userOptional.get();
@@ -66,7 +66,7 @@ public class AuthController {
         String jwt = jwtTokenProvider.generateToken(authentication);
 
         // 5️⃣ Return token + username
-        return ResponseEntity.ok(new AuthResponse(jwt, user.getUsername()));
+        return ResponseEntity.ok(new AuthResponse(jwt, user.getUsername(), user.getId()));
     }
 
     /**
@@ -92,7 +92,7 @@ public class AuthController {
             String jwt = jwtTokenProvider.generateToken(authentication);
 
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new AuthResponse(jwt, registered.getUsername()));
+                    .body(new AuthResponse(jwt, registered.getUsername(), registered.getId()));
 
         } catch (IllegalArgumentException e) {
             String msg = e.getMessage();

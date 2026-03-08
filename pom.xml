@@ -41,6 +41,13 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/THE-AkS-21/synapse</url>
+		</repository>
+	</distributionManagement>
 
 	<dependencies>
 		<dependency>
@@ -101,6 +108,7 @@
 <!--		</dependency>-->
 
 		<!-- PostgreSQL Driver -->
+
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>

@@ -28,7 +28,7 @@ public class Room {
     @Column(length = 255)
     private String id;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private String name;
 
     @Enumerated(EnumType.STRING)
@@ -38,6 +38,11 @@ public class Room {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    /** Stable FK to users.id — NOT affected by username changes */
+    @Column(name = "creator_id")
+    private Long creatorId;
+
+    /** Kept for fallback display only — do not use for permission checks */
     @Column(name = "creator_username", length = 100)
     private String creatorUsername;
 

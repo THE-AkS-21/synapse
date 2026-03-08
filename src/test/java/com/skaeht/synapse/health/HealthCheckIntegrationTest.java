@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -26,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Integration tests for health check endpoints.
  * Tests the actuator health endpoints without requiring external dependencies.
  */
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 @AutoConfigureMockMvc
 @EnableAutoConfiguration(exclude = { DataSourceAutoConfiguration.class, RedisAutoConfiguration.class })
 @TestPropertySource(properties = {
@@ -62,6 +64,9 @@ class HealthCheckIntegrationTest {
 
     @MockitoBean
     private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.skaeht.synapse.repository.InvitationRepository invitationRepository;
 
     @Test
     @org.springframework.security.test.context.support.WithMockUser

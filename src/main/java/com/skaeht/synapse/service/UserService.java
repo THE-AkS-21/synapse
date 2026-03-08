@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.util.Optional;
 
 /**
@@ -19,6 +20,8 @@ import java.util.Optional;
 public class UserService {
 
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
+    private static final String DISPLAY_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     @Autowired
     private UserRepository userRepository;
@@ -39,27 +42,41 @@ public class UserService {
     public User registerUser(String username, String email, String rawPassword) {
         log.info("Registering new user: {}", username);
 
-        // Validate username
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("Username already exists: " + username);
         }
 
-        // Validate email
         if (userRepository.existsByEmail(email)) {
             throw new IllegalArgumentException("Email already exists: " + email);
         }
 
-        // Create user
         User user = User.builder()
                 .username(username)
                 .email(email)
                 .password(passwordEncoder.encode(rawPassword))
+                .displayId(generateDisplayId())
                 .build();
 
         User savedUser = userRepository.save(user);
-        log.info("User registered successfully: {}", username);
-
+        log.info("User registered successfully: {} (displayId: {})", username, savedUser.getDisplayId());
         return savedUser;
+    }
+
+    /** Generate a unique alphanumeric display ID in format XXXX-XXXX-XXXX */
+    private String generateDisplayId() {
+        String candidate;
+        do {
+            StringBuilder sb = new StringBuilder(14);
+            for (int i = 0; i < 14; i++) {
+                if (i == 4 || i == 9) {
+                    sb.append('-');
+                } else {
+                    sb.append(DISPLAY_ID_CHARS.charAt(SECURE_RANDOM.nextInt(DISPLAY_ID_CHARS.length())));
+                }
+            }
+            candidate = sb.toString();
+        } while (userRepository.findByDisplayId(candidate).isPresent());
+        return candidate;
     }
 
     /**
@@ -71,6 +88,10 @@ public class UserService {
     @Cacheable(value = "users", key = "#username")
     public Optional<User> findByUsername(String username) {
         return userRepository.findByUsername(username);
+    }
+
+    public Optional<User> findByDisplayId(String displayId) {
+        return userRepository.findByDisplayId(displayId);
     }
 
     /**

@@ -272,10 +272,16 @@ class RoomServiceTest {
     @Test
     void testDeleteRoom_Success() {
         // Arrange
-        when(roomRepository.findById(testRoom.getId())).thenReturn(Optional.of(testRoom));
+        testRoom.setCreatorId(testUser1.getId());
+
+        lenient().when(roomRepository.findById(testRoom.getId())).thenReturn(Optional.of(testRoom));
+
+        // Make this stub lenient as well
+        lenient().when(userRepository.findById(testUser1.getId()))
+                .thenReturn(Optional.of(testUser1));
 
         // Act
-        roomService.deleteRoom(testRoom.getId(), "testuser");
+        roomService.deleteRoom(testRoom.getId(), testUser1.getId());
 
         // Assert
         verify(roomRepository).deleteById(testRoom.getId());

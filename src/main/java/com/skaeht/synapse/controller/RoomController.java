@@ -23,6 +23,9 @@ public class RoomController {
     @Autowired
     private RoomService roomService;
 
+    @Autowired
+    private com.skaeht.synapse.service.UserService userService;
+
     /** Create a new room */
     @PostMapping
     public ResponseEntity<Room> createRoom(@RequestBody Map<String, String> request, Authentication authentication) {
@@ -85,6 +88,26 @@ public class RoomController {
     public ResponseEntity<Void> deleteRoom(@PathVariable String roomId, Authentication authentication) {
         roomService.deleteRoom(roomId, authentication.getName());
         return ResponseEntity.ok().build();
+    }
+
+    /** Join a public room (authenticated user adds themselves) */
+    @PostMapping("/{roomId}/join")
+    public ResponseEntity<?> joinRoom(@PathVariable String roomId, Authentication authentication) {
+        var roomOpt = roomService.getRoomById(roomId);
+        if (roomOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        var room = roomOpt.get();
+        if (room.getType() == Room.RoomType.PRIVATE) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN)
+                    .body(java.util.Map.of("message", "This room is private. You need an invitation to join."));
+        }
+        // Get current user id from UserService via authentication name
+        var userOpt = userService.findByUsername(authentication.getName());
+        if (userOpt.isEmpty())
+            return ResponseEntity.status(401).build();
+        roomService.addParticipant(roomId, userOpt.get().getId());
+        return ResponseEntity.ok(room);
     }
 
     /** Update room theme (creator only) */

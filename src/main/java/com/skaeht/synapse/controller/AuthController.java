@@ -57,9 +57,7 @@ public class AuthController {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
                         user.getUsername(),
-                        loginRequest.password()
-                )
-        );
+                        loginRequest.password()));
 
         // 3️⃣ Set authentication
         SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -79,19 +77,32 @@ public class AuthController {
      */
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody RegisterRequest registerRequest) {
-
         try {
-            // Delegate to service layer
-            userService.registerUser(
+            com.skaeht.synapse.entity.User registered = userService.registerUser(
                     registerRequest.username(),
                     registerRequest.email(),
                     registerRequest.password());
 
-            return new ResponseEntity<>("User registered successfully", HttpStatus.CREATED);
+            // Auto-login: authenticate the just-registered user to get JWT
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            registerRequest.username(),
+                            registerRequest.password()));
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            String jwt = jwtTokenProvider.generateToken(authentication);
+
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(new AuthResponse(jwt, registered.getUsername()));
 
         } catch (IllegalArgumentException e) {
-            // Handle validation errors (username/email already exists)
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
+            String msg = e.getMessage();
+            // Determine if it's a username or email conflict (409) or other validation
+            // (400)
+            HttpStatus status = (msg != null && (msg.contains("Username") || msg.contains("Email")))
+                    ? HttpStatus.CONFLICT
+                    : HttpStatus.BAD_REQUEST;
+            return ResponseEntity.status(status)
+                    .body(java.util.Map.of("message", msg != null ? msg : "Registration failed"));
         }
     }
 }

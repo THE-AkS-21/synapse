@@ -3,6 +3,7 @@ package com.skaeht.synapse;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
@@ -17,9 +18,10 @@ import com.skaeht.synapse.repository.RoomRepository;
 import org.redisson.api.RedissonClient;
 
 @SpringBootTest
-@EnableAutoConfiguration(exclude = { DataSourceAutoConfiguration.class, RedisAutoConfiguration.class })
-@TestPropertySource(properties = {
-        "management.health.redis.enabled=false"
+@ActiveProfiles("test")
+@EnableAutoConfiguration(exclude = {
+        DataSourceAutoConfiguration.class,
+        RedisAutoConfiguration.class
 })
 class SynapseApplicationTests {
 
@@ -46,6 +48,9 @@ class SynapseApplicationTests {
 
     @MockitoBean
     private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.skaeht.synapse.repository.InvitationRepository invitationRepository;
 
     @Test
     void contextLoads() {

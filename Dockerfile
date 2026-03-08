@@ -27,4 +27,4 @@ COPY --from=build /app/target/synapse-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8080
 
 # The command to run your application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java","-XX:+UseG1GC","-XX:MaxRAMPercentage=75.0","-jar","app.jar"]

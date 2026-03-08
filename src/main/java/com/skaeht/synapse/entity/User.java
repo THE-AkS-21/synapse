@@ -33,6 +33,12 @@ public class User implements UserDetails {
     @Column(nullable = false)
     private String password;
 
+    /**
+     * Human-readable display ID shown in profile settings — format XXXX-XXXX-XXXX
+     */
+    @Column(name = "display_id", unique = true, length = 14)
+    private String displayId;
+
     // We can add roles, but for a simple chat, one role is fine
     // For simplicity, we'll hardcode the role
     // @Enumerated(EnumType.STRING)

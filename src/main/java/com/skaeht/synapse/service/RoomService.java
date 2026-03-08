@@ -49,7 +49,9 @@ public class RoomService {
      */
     @Transactional
     public Room createRoom(String name, Room.RoomType type, String creatorUsername) {
-        if (roomRepository.existsByName(name)) {
+        // Only enforce unique rooms names for PUBLIC/PRIVATE (not DIRECT rooms which
+        // use internal names)
+        if (type != Room.RoomType.DIRECT && roomRepository.existsByName(name)) {
             throw new IllegalArgumentException("Room with name '" + name + "' already exists");
         }
 
@@ -57,17 +59,18 @@ public class RoomService {
                 .id(generateRoomId())
                 .name(name)
                 .type(type)
-                .creatorUsername(creatorUsername)
+                .creatorUsername(creatorUsername) // display only
                 .build();
 
         if (creatorUsername != null) {
             User creator = userRepository.findByUsername(creatorUsername)
                     .orElseThrow(() -> new IllegalArgumentException("Creator user not found"));
+            room.setCreatorId(creator.getId()); // stable FK — won't break on username change
             room.getParticipants().add(creator);
         }
 
         Room savedRoom = roomRepository.save(room);
-        log.info("Created room: {} (type: {}) by {}", name, type, creatorUsername);
+        log.info("Created room: {} (type: {}) by {} [id={}]", name, type, creatorUsername, room.getCreatorId());
         return savedRoom;
     }
 
@@ -200,34 +203,53 @@ public class RoomService {
     }
 
     /**
-     * Delete a room — only allowed by the creator
+     * Delete a room — only allowed by the creator (by stable user ID).
      */
     @Transactional
     @CacheEvict(value = "rooms", key = "#roomId")
-    public void deleteRoom(String roomId, String requestingUsername) {
+    public void deleteRoom(String roomId, Long requestingUserId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+        if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
             throw new IllegalStateException("Only the room creator can delete this room");
         }
         roomRepository.deleteById(roomId);
-        log.info("Deleted room {} by {}", roomId, requestingUsername);
+        log.info("Deleted room {} by userId={}", roomId, requestingUserId);
+    }
+
+    /** Backward-compat overload by username (resolves to userId) */
+    @Transactional
+    @CacheEvict(value = "rooms", key = "#roomId")
+    public void deleteRoom(String roomId, String requestingUsername) {
+        User u = userRepository.findByUsername(requestingUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        deleteRoom(roomId, u.getId());
     }
 
     /**
-     * Remove a member from a room — only allowed by the creator
+     * Remove a member from a room — only allowed by the creator (by stable user
+     * ID).
      */
     @Transactional
     @CacheEvict(value = "rooms", key = "#roomId")
-    public void removeMember(String roomId, Long userId, String requestingUsername) {
+    public void removeMember(String roomId, Long userId, Long requestingUserId) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+        if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
             throw new IllegalStateException("Only the room creator can remove members");
         }
         room.getParticipants().removeIf(user -> user.getId().equals(userId));
         roomRepository.save(room);
-        log.info("Removed user {} from room {} by {}", userId, roomId, requestingUsername);
+        log.info("Removed userId={} from room {} by userId={}", userId, roomId, requestingUserId);
+    }
+
+    /** Backward-compat overload by username */
+    @Transactional
+    @CacheEvict(value = "rooms", key = "#roomId")
+    public void removeMember(String roomId, Long userId, String requestingUsername) {
+        User u = userRepository.findByUsername(requestingUsername)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        removeMember(roomId, userId, u.getId());
     }
 
     /**

@@ -12,6 +12,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -24,6 +25,7 @@ public class UserController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    /** Get the current authenticated user's profile (includes displayId). */
     @GetMapping("/me")
     public ResponseEntity<UserProfileResponse> getCurrentUser(Authentication authentication) {
         String username = authentication.getName();
@@ -34,9 +36,28 @@ public class UserController {
         }
 
         User user = userOpt.get();
-        return ResponseEntity.ok(new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail()));
+        return ResponseEntity.ok(new UserProfileResponse(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail(),
+                user.getDisplayId()));
     }
 
+    /**
+     * Look up a user by their display ID — used to validate invite targets.
+     * Returns only the username (no sensitive data).
+     */
+    @GetMapping("/by-display-id/{displayId}")
+    public ResponseEntity<Map<String, String>> getUserByDisplayId(@PathVariable String displayId) {
+        Optional<User> userOpt = userService.findByDisplayId(displayId);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        // Only expose the username, not email or internal ID
+        return ResponseEntity.ok(Map.of("username", userOpt.get().getUsername()));
+    }
+
+    /** Update password. */
     @PutMapping("/me/password")
     public ResponseEntity<String> updatePassword(Authentication authentication,
             @Valid @RequestBody PasswordUpdateRequest request) {
@@ -61,9 +82,10 @@ public class UserController {
         }
     }
 
+    /** Update username. */
     @PutMapping("/me/username")
     public ResponseEntity<String> updateUsername(Authentication authentication,
-            @RequestBody java.util.Map<String, String> request) {
+            @RequestBody Map<String, String> request) {
         String newUsername = request.get("username");
         if (newUsername == null || newUsername.trim().length() < 3) {
             return ResponseEntity.badRequest().body("Username must be at least 3 characters");

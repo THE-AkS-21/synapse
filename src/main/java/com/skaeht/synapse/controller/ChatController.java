@@ -1,7 +1,9 @@
 package com.skaeht.synapse.controller;
 
 import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.service.ChatService;
+import com.skaeht.synapse.service.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -22,6 +24,14 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
+    @Autowired
+    private UserService userService;
+
+    private Long getSenderId(String username) {
+        return userService.findByUsername(username)
+                .map(User::getId)
+                .orElseThrow(() -> new IllegalStateException("User not found: " + username));
+    }
     /**
      * Handle messages sent to a specific room.
      * WebSocket destination: /app/room/{roomId}
@@ -31,17 +41,11 @@ public class ChatController {
      * @param principal   The authenticated user
      */
     @MessageMapping("/room/{roomId}")
-    public void sendToRoom(
-            @DestinationVariable String roomId,
-            @Payload ChatMessage chatMessage,
-            Principal principal) {
-
+    public void sendToRoom(@DestinationVariable String roomId, @Payload ChatMessage chatMessage, Principal principal) {
         String username = principal != null ? principal.getName() : chatMessage.from();
-
+        Long senderId = getSenderId(username);
         log.info("User {} sending message to room {}", username, roomId);
-
-        // Send message via service (async)
-        chatService.sendMessage(chatMessage.content(), username, roomId);
+        chatService.sendMessage(chatMessage.content(), senderId, username, roomId);
     }
 
     /**
@@ -54,28 +58,20 @@ public class ChatController {
     @MessageMapping("/chat")
     public void send(@Payload ChatMessage chatMessage, Principal principal) {
         String username = principal != null ? principal.getName() : chatMessage.from();
-
+        Long senderId = getSenderId(username);
         log.info("User {} sending message to general room", username);
-
-        // Send to default "general" room
-        chatService.sendMessage(chatMessage.content(), username);
+        chatService.sendMessage(chatMessage.content(), senderId, username);
     }
 
     @MessageMapping("/chat.send")
-    public void sendMessage(
-            ChatMessage message,
-            Principal principal) {
-
+    public void sendMessage(ChatMessage message, Principal principal) {
         String username = principal.getName();
+        Long senderId = getSenderId(username);
 
         message = new ChatMessage(
-                message.id(),
-                message.roomId(),
-                username,
-                message.content(),
-                message.timestamp(),
-                message.traceId());
+                message.id(), message.roomId(), senderId, username,
+                message.content(), message.timestamp(), message.traceId());
 
-        chatService.sendMessage(message.content(), username, message.roomId());
+        chatService.sendMessage(message.content(), senderId, username, message.roomId());
     }
 }

@@ -58,7 +58,7 @@ class ChatServiceTest {
                 .id(1L)
                 .messageId("test-id")
                 .roomId(roomId)
-                .senderUsername(sender)
+                .senderId(1L)
                 .content(content)
                 .timestamp(System.currentTimeMillis())
                 .build();
@@ -66,7 +66,7 @@ class ChatServiceTest {
         when(messageRepository.save(any(Message.class))).thenReturn(mockMessage);
 
         // Act
-        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, sender, roomId);
+        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, 1L, sender, roomId);
         ChatMessage chatMessage = result.join();
 
         // Assert
@@ -90,7 +90,7 @@ class ChatServiceTest {
         when(messageRepository.save(any(Message.class))).thenReturn(Message.builder().build());
 
         // Act
-        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, sender);
+        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, 1L, sender);
         ChatMessage chatMessage = result.join();
 
         // Assert
@@ -106,7 +106,7 @@ class ChatServiceTest {
     void testSendMessage_EmptyContent() {
         // Act & Assert
         assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage("", "testuser", "general");
+            chatService.sendMessage("", 1L, "testuser", "general");
         });
 
         verify(messageRepository, never()).save(any());
@@ -117,7 +117,7 @@ class ChatServiceTest {
     void testSendMessage_NullContent() {
         // Act & Assert
         assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage(null, "testuser", "general");
+            chatService.sendMessage(null, 1L, "testuser", "general");
         });
 
         verify(messageRepository, never()).save(any());
@@ -131,7 +131,7 @@ class ChatServiceTest {
 
         // Act & Assert
         assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage(longContent, "testuser", "general");
+            chatService.sendMessage(longContent,1L, "testuser", "general");
         });
 
         verify(messageRepository, never()).save(any());
@@ -160,8 +160,8 @@ class ChatServiceTest {
         when(messageRepository.save(any(Message.class))).thenReturn(Message.builder().build());
 
         // Act
-        ChatMessage message1 = chatService.sendMessage("Test 1", "user1", "room1").join();
-        ChatMessage message2 = chatService.sendMessage("Test 2", "user1", "room1").join();
+        ChatMessage message1 = chatService.sendMessage("Test 1", 1L, "user1", "room1").join();
+        ChatMessage message2 = chatService.sendMessage("Test 2", 1L, "user1", "room1").join();
 
         // Assert - each message should have unique ID and traceId
         assertNotNull(message1.id());

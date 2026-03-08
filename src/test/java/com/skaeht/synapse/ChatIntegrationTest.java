@@ -128,7 +128,7 @@ class ChatIntegrationTest {
         Thread.sleep(500);
 
         // Send to the updated endpoint with room-based routing
-        ChatMessage messageToSend = new ChatMessage("general", username, "Hello, World!", System.currentTimeMillis());
+        ChatMessage messageToSend = new ChatMessage("general",1L, username, "Hello, World!", System.currentTimeMillis());
         session.send("/app/chat.sendMessage", messageToSend);
 
         ChatMessage receivedMessage = messageQueue.poll(10, TimeUnit.SECONDS);

@@ -54,7 +54,7 @@ public class ChatService {
      */
     @Async
     @Transactional
-    public CompletableFuture<ChatMessage> sendMessage(String content, String senderUsername, String roomId) {
+    public CompletableFuture<ChatMessage> sendMessage(String content, Long senderId, String senderUsername, String roomId) {
         // Validate message
         if (!isValidMessage(content)) {
             throw new IllegalArgumentException("Invalid message: empty or too long");
@@ -63,7 +63,7 @@ public class ChatService {
         long timestamp = System.currentTimeMillis();
 
         // Create ChatMessage DTO with auto-generated ID and traceId
-        ChatMessage chatMessage = new ChatMessage(roomId, senderUsername, content, timestamp);
+        ChatMessage chatMessage = new ChatMessage(roomId,senderId, senderUsername, content, timestamp);
 
         // Publish to Redis immediately for real-time delivery
         redisPublisher.publish(chatMessage);
@@ -79,7 +79,7 @@ public class ChatService {
             Message dbMessage = Message.builder()
                     .messageId(chatMessage.id())
                     .roomId(chatMessage.roomId())
-                    .senderUsername(senderUsername)
+                    .senderId(senderId)
                     .content(content)
                     .timestamp(timestamp)
                     .build();
@@ -96,8 +96,8 @@ public class ChatService {
      */
     @Async
     @Transactional
-    public CompletableFuture<ChatMessage> sendMessage(String content, String senderUsername) {
-        return sendMessage(content, senderUsername, "general");
+    public CompletableFuture<ChatMessage> sendMessage(String content,Long senderId, String senderUsername) {
+        return sendMessage(content, senderId, senderUsername, "general");
     }
 
     /**

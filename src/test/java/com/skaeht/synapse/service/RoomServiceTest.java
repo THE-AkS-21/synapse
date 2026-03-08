@@ -65,7 +65,9 @@ class RoomServiceTest {
         User mockCreator = new User();
         mockCreator.setId(1L);
         mockCreator.setUsername("test_creator_username");
-        when(userRepository.findByUsername("test_creator_username")).thenReturn(Optional.of(mockCreator));
+
+        // FIXED: Service now looks up by ID, so we mock findById
+        when(userRepository.findById(1L)).thenReturn(Optional.of(mockCreator));
 
         // Assuming 'room' refers to a Room object that would be returned by the save
         // method.
@@ -74,10 +76,12 @@ class RoomServiceTest {
                 .id(UUID.randomUUID().toString())
                 .name("test_room")
                 .type(Room.RoomType.PUBLIC)
+                .creatorId(1L)
                 .build();
         when(roomRepository.save(any(Room.class))).thenReturn(mockSavedRoom);
 
-        Room savedRoom = roomService.createRoom("test_room", Room.RoomType.PUBLIC, "test_creator_username");
+        // FIXED: Pass Long 1L instead of String "test_creator_username"
+        Room savedRoom = roomService.createRoom("test_room", Room.RoomType.PUBLIC, 1L);
 
         // Assert
         assertNotNull(savedRoom);
@@ -94,7 +98,8 @@ class RoomServiceTest {
         when(roomRepository.existsByName("test_room")).thenReturn(true);
 
         assertThrows(IllegalArgumentException.class, () -> {
-            roomService.createRoom("test_room", Room.RoomType.PUBLIC, "test_creator_username");
+            // FIXED: Pass Long 1L instead of String "test_creator_username"
+            roomService.createRoom("test_room", Room.RoomType.PUBLIC, 1L);
         });
 
         verify(roomRepository, never()).save(any());

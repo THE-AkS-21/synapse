@@ -43,8 +43,8 @@ public class Room {
     private Long creatorId;
 
     /** Kept for fallback display only — do not use for permission checks */
-    @Column(name = "creator_username", length = 100)
-    private String creatorUsername;
+//    @Column(name = "creator_username", length = 100)
+//    private String creatorUsername;
 
     @Column(name = "theme", length = 50)
     @Builder.Default

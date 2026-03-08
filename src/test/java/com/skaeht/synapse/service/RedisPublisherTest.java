@@ -31,7 +31,7 @@ class RedisPublisherTest {
 
     @BeforeEach
     void setUp() {
-        testMessage = new ChatMessage("general", "testuser", "Hello, World!", System.currentTimeMillis());
+        testMessage = new ChatMessage("general",1L, "testuser", "Hello, World!", System.currentTimeMillis());
     }
 
     @Test
@@ -64,7 +64,7 @@ class RedisPublisherTest {
     @Test
     void testPublish_DifferentRoom() throws Exception {
         // Arrange
-        ChatMessage roomMessage = new ChatMessage("tech-talk", "testuser", "Test message", System.currentTimeMillis());
+        ChatMessage roomMessage = new ChatMessage("tech-talk",1L, "testuser", "Test message", System.currentTimeMillis());
 
         // Act
         redisPublisher.publish(roomMessage).join();
@@ -79,7 +79,7 @@ class RedisPublisherTest {
     @Test
     void testPublish_NullRoomId() throws Exception {
         // Arrange - message with null roomId should default to "general"
-        ChatMessage nullRoomMessage = new ChatMessage(null, "testuser", "Test", System.currentTimeMillis());
+        ChatMessage nullRoomMessage = new ChatMessage(null,1L, "testuser", "Test", System.currentTimeMillis());
 
         // Act
         redisPublisher.publish(nullRoomMessage).join();

@@ -32,7 +32,13 @@ public class RoomController {
         String name = request.get("name");
         String typeStr = request.getOrDefault("type", "PUBLIC");
         Room.RoomType type = Room.RoomType.valueOf(typeStr.toUpperCase());
-        Room room = roomService.createRoom(name, type, authentication.getName());
+
+        // Fetch the user to get their ID
+        var userOpt = userService.findByUsername(authentication.getName());
+        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
+
+        // Pass the user ID instead of the username
+        Room room = roomService.createRoom(name, type, userOpt.get().getId());
         return ResponseEntity.ok(room);
     }
 
@@ -117,7 +123,13 @@ public class RoomController {
             @RequestBody Map<String, String> request,
             Authentication authentication) {
         String theme = request.get("theme");
-        Room updated = roomService.updateTheme(roomId, theme, authentication.getName());
+
+        // Fetch the user to get their ID
+        var userOpt = userService.findByUsername(authentication.getName());
+        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
+
+        // Pass the user ID instead of the username
+        Room updated = roomService.updateTheme(roomId, theme, userOpt.get().getId());
         return ResponseEntity.ok(updated);
     }
 }

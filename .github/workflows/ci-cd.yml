@@ -43,11 +43,9 @@ jobs:
 
       # 5️⃣ Build Docker Image
       - name: Build Docker Image
-        run: |
-          docker build -t ghcr.io/${{ github.repository }}:latest .
+        run: docker build -t ghcr.io/the-aks-21/synapse:latest .
 
 
       # 6️⃣ Push Docker Image
       - name: Push Docker Image
-        run: |
-          docker push ghcr.io/${{ github.repository }}:latest
+        run: docker push ghcr.io/the-aks-21/synapse:latest

@@ -133,4 +133,25 @@ public class UserService {
 
         return false;
     }
+
+    /**
+     * Update username.
+     * 
+     * @return true if updated, false if username taken
+     */
+    @Transactional
+    public boolean updateUsername(String currentUsername, String newUsername) {
+        if (userRepository.existsByUsername(newUsername)) {
+            return false;
+        }
+        Optional<User> userOpt = userRepository.findByUsername(currentUsername);
+        if (userOpt.isPresent()) {
+            User user = userOpt.get();
+            user.setUsername(newUsername);
+            userRepository.save(user);
+            log.info("Username updated: {} -> {}", currentUsername, newUsername);
+            return true;
+        }
+        return false;
+    }
 }

@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Service for managing chat rooms and channels
@@ -58,6 +57,7 @@ public class RoomService {
                 .id(generateRoomId())
                 .name(name)
                 .type(type)
+                .creatorUsername(creatorUsername)
                 .build();
 
         if (creatorUsername != null) {
@@ -97,7 +97,7 @@ public class RoomService {
         String roomName = "dm_" + Math.min(user1Id, user2Id) + "_" + Math.max(user1Id, user2Id);
 
         Room room = Room.builder()
-                .id(UUID.randomUUID().toString())
+                .id(generateRoomId())
                 .name(roomName)
                 .type(Room.RoomType.DIRECT)
                 .build();
@@ -200,12 +200,48 @@ public class RoomService {
     }
 
     /**
-     * Delete a room
+     * Delete a room — only allowed by the creator
      */
     @Transactional
     @CacheEvict(value = "rooms", key = "#roomId")
-    public void deleteRoom(String roomId) {
+    public void deleteRoom(String roomId, String requestingUsername) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+            throw new IllegalStateException("Only the room creator can delete this room");
+        }
         roomRepository.deleteById(roomId);
-        log.info("Deleted room {}", roomId);
+        log.info("Deleted room {} by {}", roomId, requestingUsername);
+    }
+
+    /**
+     * Remove a member from a room — only allowed by the creator
+     */
+    @Transactional
+    @CacheEvict(value = "rooms", key = "#roomId")
+    public void removeMember(String roomId, Long userId, String requestingUsername) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+            throw new IllegalStateException("Only the room creator can remove members");
+        }
+        room.getParticipants().removeIf(user -> user.getId().equals(userId));
+        roomRepository.save(room);
+        log.info("Removed user {} from room {} by {}", userId, roomId, requestingUsername);
+    }
+
+    /**
+     * Update room theme — only allowed by the creator
+     */
+    @Transactional
+    @CacheEvict(value = "rooms", key = "#roomId")
+    public Room updateTheme(String roomId, String theme, String requestingUsername) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        if (room.getCreatorUsername() != null && !room.getCreatorUsername().equals(requestingUsername)) {
+            throw new IllegalStateException("Only the room creator can change the theme");
+        }
+        room.setTheme(theme);
+        return roomRepository.save(room);
     }
 }

@@ -39,9 +39,9 @@ class MessageServiceTest {
     @BeforeEach
     void setUp() {
         testMessages = Arrays.asList(
-                Message.builder().id(1L).senderUsername("user1").content("Message 1").timestamp(1000L).build(),
-                Message.builder().id(2L).senderUsername("user2").content("Message 2").timestamp(2000L).build(),
-                Message.builder().id(3L).senderUsername("user1").content("Message 3").timestamp(3000L).build());
+                Message.builder().id(1L).senderId(1L).content("Message 1").timestamp(1000L).build(),
+                Message.builder().id(2L).senderId(2L).content("Message 2").timestamp(2000L).build(),
+                Message.builder().id(3L).senderId(1L).content("Message 3").timestamp(3000L).build());
     }
 
     @Test
@@ -75,20 +75,17 @@ class MessageServiceTest {
     }
 
     @Test
-    void testGetMessagesBySender() {
-        // Arrange
+    void testGetMessagesBySenderId() {
         List<Message> user1Messages = Arrays.asList(testMessages.get(0), testMessages.get(2));
         Page<Message> page = new PageImpl<>(user1Messages);
-        when(messageRepository.findBySenderUsername(eq("user1"), any(Pageable.class))).thenReturn(page);
+        when(messageRepository.findBySenderId(eq(1L), any(Pageable.class))).thenReturn(page);
 
-        // Act
-        Page<Message> result = messageService.getMessagesBySender("user1", 0, 10);
+        Page<Message> result = messageService.getMessagesBySenderId(1L, 0, 10);
 
-        // Assert
         assertNotNull(result);
         assertEquals(2, result.getContent().size());
-        assertEquals("user1", result.getContent().get(0).getSenderUsername());
-        verify(messageRepository, times(1)).findBySenderUsername(eq("user1"), any(Pageable.class));
+        assertEquals(1L, result.getContent().get(0).getSenderId());
+        verify(messageRepository, times(1)).findBySenderId(eq(1L), any(Pageable.class));
     }
 
     @Test

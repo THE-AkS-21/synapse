@@ -19,6 +19,7 @@ import java.util.UUID;
 public record ChatMessage(
                 String id,
                 String roomId,
+                Long senderId,
                 String from,
                 String content,
                 long timestamp,
@@ -26,10 +27,11 @@ public record ChatMessage(
         /**
          * Constructor with auto-generated ID and trace ID
          */
-        public ChatMessage(String roomId, String from, String content, long timestamp) {
+        public ChatMessage(String roomId,Long senderId, String from, String content, long timestamp) {
                 this(
                                 UUID.randomUUID().toString(),
                                 roomId,
+                                senderId,
                                 from,
                                 content,
                                 timestamp,
@@ -39,7 +41,7 @@ public record ChatMessage(
         /**
          * Constructor with manual ID but auto-generated trace ID
          */
-        public ChatMessage(String id, String roomId, String from, String content, long timestamp) {
-                this(id, roomId, from, content, timestamp, UUID.randomUUID().toString());
+        public ChatMessage(String id, String roomId, Long senderId, String from, String content, long timestamp) {
+                this(id, roomId, senderId, from, content, timestamp, UUID.randomUUID().toString());
         }
 }

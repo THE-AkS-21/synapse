@@ -13,7 +13,7 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     /**
      * Find messages by sender username with pagination.
      */
-    Page<Message> findBySenderUsername(String senderUsername, Pageable pageable);
+    Page<Message> findBySenderId(Long senderId, Pageable pageable);
 
     /**
      * Delete messages older than a specific timestamp.

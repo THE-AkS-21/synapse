@@ -37,7 +37,7 @@ class RedisSubscriberTest {
 
     @BeforeEach
     void setUp() {
-        testChatMessage = new ChatMessage("general", "testuser", "Hello, World!", System.currentTimeMillis());
+        testChatMessage = new ChatMessage("general",1L, "testuser", "Hello, World!", System.currentTimeMillis());
         redisMessage = mock(Message.class);
     }
 
@@ -80,7 +80,7 @@ class RedisSubscriberTest {
     @Test
     void testOnMessage_DifferentRoom() throws Exception {
         // Arrange
-        ChatMessage techTalkMessage = new ChatMessage("tech-talk", "user1", "Test", System.currentTimeMillis());
+        ChatMessage techTalkMessage = new ChatMessage("tech-talk",1L, "user1", "Test", System.currentTimeMillis());
         byte[] messageBody = "message".getBytes();
         when(redisMessage.getBody()).thenReturn(messageBody);
         when(objectMapper.readValue(messageBody, ChatMessage.class)).thenReturn(techTalkMessage);
@@ -100,7 +100,7 @@ class RedisSubscriberTest {
     @Test
     void testOnMessage_NullRoomId() throws Exception {
         // Arrange - null roomId should default to "general"
-        ChatMessage nullRoomMessage = new ChatMessage(null, "user1", "Test", System.currentTimeMillis());
+        ChatMessage nullRoomMessage = new ChatMessage(null,1L, "user1", "Test", System.currentTimeMillis());
         byte[] messageBody = "message".getBytes();
         when(redisMessage.getBody()).thenReturn(messageBody);
         when(objectMapper.readValue(messageBody, ChatMessage.class)).thenReturn(nullRoomMessage);

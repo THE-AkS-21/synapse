@@ -129,6 +129,7 @@ public class RedisStreamMessageBufferService {
             Map<String, String> messageData = new HashMap<>();
             messageData.put("id", chatMessage.id());
             messageData.put("roomId", chatMessage.roomId());
+            messageData.put("senderId", String.valueOf(chatMessage.senderId()));
             messageData.put("from", chatMessage.from());
             messageData.put("content", chatMessage.content());
             messageData.put("timestamp", String.valueOf(chatMessage.timestamp()));
@@ -200,9 +201,11 @@ public class RedisStreamMessageBufferService {
         for (MapRecord<String, Object, Object> record : records) {
             try {
                 Map<Object, Object> value = record.getValue();
+                Long senderId = value.get("senderId") != null ? Long.parseLong(value.get("senderId").toString()) : null;
                 ChatMessage chatMessage = new ChatMessage(
                         value.get("id").toString(),
                         value.get("roomId").toString(),
+                        senderId,
                         value.get("from").toString(),
                         value.get("content").toString(),
                         Long.parseLong(value.get("timestamp").toString()));
@@ -234,7 +237,7 @@ public class RedisStreamMessageBufferService {
         return Message.builder()
                 .messageId(chatMessage.id())
                 .roomId(chatMessage.roomId())
-                .senderUsername(chatMessage.from())
+                .senderId(chatMessage.senderId())
                 .content(chatMessage.content())
                 .timestamp(chatMessage.timestamp())
                 .build();

@@ -151,7 +151,7 @@ public class MessageBufferService {
         return Message.builder()
                 .messageId(chatMessage.id())
                 .roomId(chatMessage.roomId())
-                .senderUsername(chatMessage.from())
+                .senderId(chatMessage.senderId())
                 .content(chatMessage.content())
                 .timestamp(chatMessage.timestamp())
                 .build();

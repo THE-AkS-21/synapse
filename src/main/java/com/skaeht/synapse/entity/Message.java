@@ -6,7 +6,7 @@ import lombok.*;
 @Entity
 @Table(name = "messages", indexes = {
         @Index(name = "idx_room_timestamp", columnList = "roomId,timestamp"),
-        @Index(name = "idx_sender_timestamp", columnList = "senderUsername,timestamp"),
+        @Index(name = "idx_sender_timestamp", columnList = "senderId,timestamp"),
         @Index(name = "idx_timestamp", columnList = "timestamp"),
         @Index(name = "idx_message_id", columnList = "messageId")
 })
@@ -27,7 +27,7 @@ public class Message {
     private String roomId; // Room/channel ID for targeted messaging
 
     @Column(nullable = false)
-    private String senderUsername;
+    private Long senderId;
 
     @Column(nullable = false, length = 5000)
     private String content;

@@ -49,14 +49,14 @@ public class MessageService {
     /**
      * Get messages by sender username.
      *
-     * @param username The sender's username
+     * @param senderId The sender's Id
      * @param page     Page number
      * @param size     Page size
      * @return Page of messages from the specified user
      */
-    public Page<Message> getMessagesBySender(String username, int page, int size) {
+    public Page<Message> getMessagesBySenderId(Long senderId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "timestamp"));
-        return messageRepository.findBySenderUsername(username, pageable);
+        return messageRepository.findBySenderId(senderId, pageable); // Requires updating MessageRepository
     }
 
     /**

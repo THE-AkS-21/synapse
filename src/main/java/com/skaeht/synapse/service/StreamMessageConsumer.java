@@ -46,7 +46,10 @@ public class StreamMessageConsumer {
                     message.setMessageId((String) record.getValue().get("id"));
                     message.setRoomId((String) record.getValue().get("roomId"));
                     message.setContent((String) record.getValue().get("content"));
-                    message.setSenderUsername((String) record.getValue().get("from"));
+                    Object senderIdRaw = record.getValue().get("senderId");
+                    if (senderIdRaw != null) {
+                        message.setSenderId(Long.parseLong(senderIdRaw.toString()));
+                    }
                     message.setTimestamp(Long.parseLong((String) record.getValue().get("timestamp")));
 
                     batch.add(message);

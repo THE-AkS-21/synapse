@@ -60,4 +60,20 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update password");
         }
     }
+
+    @PutMapping("/me/username")
+    public ResponseEntity<String> updateUsername(Authentication authentication,
+            @RequestBody java.util.Map<String, String> request) {
+        String newUsername = request.get("username");
+        if (newUsername == null || newUsername.trim().length() < 3) {
+            return ResponseEntity.badRequest().body("Username must be at least 3 characters");
+        }
+        String currentUsername = authentication.getName();
+        boolean updated = userService.updateUsername(currentUsername, newUsername.trim());
+        if (updated) {
+            return ResponseEntity.ok("Username updated successfully");
+        } else {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("Username already taken");
+        }
+    }
 }

@@ -38,6 +38,13 @@ public class Room {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "creator_username", length = 100)
+    private String creatorUsername;
+
+    @Column(name = "theme", length = 50)
+    @Builder.Default
+    private String theme = "default";
+
     @JsonIgnore
     @ManyToMany
     @JoinTable(name = "room_participants", joinColumns = @JoinColumn(name = "room_id"), inverseJoinColumns = @JoinColumn(name = "user_id"))

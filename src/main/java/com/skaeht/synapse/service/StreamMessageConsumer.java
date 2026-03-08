@@ -63,7 +63,8 @@ public class StreamMessageConsumer {
 
                     // Only acknowledge the consumed records AFTER safely putting them in the
                     // database!
-                    redisTemplate.opsForStream().acknowledge(STREAM, GROUP, recordIds.toArray(new RecordId[0]));
+                    RecordId[] ids = recordIds.toArray(new RecordId[0]);
+                    redisTemplate.opsForStream().acknowledge(STREAM, GROUP, ids);
                 } catch (Exception e) {
                     log.error("Failed to persist message batch to database, aborting acknowledge...", e);
                 }

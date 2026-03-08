@@ -271,8 +271,11 @@ class RoomServiceTest {
 
     @Test
     void testDeleteRoom_Success() {
+        // Arrange
+        when(roomRepository.findById(testRoom.getId())).thenReturn(Optional.of(testRoom));
+
         // Act
-        roomService.deleteRoom(testRoom.getId());
+        roomService.deleteRoom(testRoom.getId(), "testuser");
 
         // Assert
         verify(roomRepository).deleteById(testRoom.getId());

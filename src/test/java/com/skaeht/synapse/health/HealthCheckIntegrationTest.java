@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
@@ -23,10 +22,6 @@ import org.redisson.api.RedissonClient;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Integration tests for health check endpoints.
- * Tests the actuator health endpoints without requiring external dependencies.
- */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
@@ -38,35 +33,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 class HealthCheckIntegrationTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Autowired private MockMvc mockMvc;
 
-    @MockitoBean
-    private UserRepository userRepository;
+    @MockitoBean private UserRepository userRepository;
+    @MockitoBean private MessageRepository messageRepository;
+    @MockitoBean private RoomRepository roomRepository;
+    @MockitoBean private RedissonClient redissonClient;
+    @MockitoBean private DataSource dataSource;
+    @MockitoBean private RedisConnectionFactory redisConnectionFactory;
+    @MockitoBean private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
+    @MockitoBean private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
+    @MockitoBean private com.skaeht.synapse.repository.InvitationRepository invitationRepository;
 
-    @MockitoBean
-    private MessageRepository messageRepository;
-
-    @MockitoBean
-    private RoomRepository roomRepository;
-
-    @MockitoBean
-    private RedissonClient redissonClient;
-
-    @MockitoBean
-    private DataSource dataSource;
-
-    @MockitoBean
-    private RedisConnectionFactory redisConnectionFactory;
-
-    @MockitoBean
-    private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
-
-    @MockitoBean
-    private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
-
-    @org.springframework.test.context.bean.override.mockito.MockitoBean
-    private com.skaeht.synapse.repository.InvitationRepository invitationRepository;
+    @MockitoBean private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+    @MockitoBean private org.springframework.messaging.simp.SimpMessagingTemplate simpMessagingTemplate;
 
     @Test
     @org.springframework.security.test.context.support.WithMockUser

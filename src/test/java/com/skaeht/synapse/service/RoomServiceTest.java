@@ -2,6 +2,7 @@ package com.skaeht.synapse.service;
 
 import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.repository.MessageRepository;
 import com.skaeht.synapse.repository.RoomRepository;
 import com.skaeht.synapse.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.*;
 
@@ -33,6 +35,9 @@ class RoomServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock private MessageRepository messageRepository;
+    @Mock private SimpMessagingTemplate messagingTemplate;
+
     @InjectMocks
     private RoomService roomService;
 
@@ -40,68 +45,120 @@ class RoomServiceTest {
     private User testUser2;
     private Room testRoom;
 
+    private User user1;
+    private User user2;
+    private Room directRoom;
+    private Room publicRoom;
+
     @BeforeEach
     void setUp() {
-        testUser1 = new User();
-        testUser1.setId(1L);
-        testUser1.setUsername("user1");
 
-        testUser2 = new User();
-        testUser2.setId(2L);
-        testUser2.setUsername("user2");
-
+        testUser1 = User.builder().id(1L).username("testUser1").build();
+        testUser2 = User.builder().id(2L).username("testUser2").build();
         testRoom = Room.builder()
-                .id(UUID.randomUUID().toString())
+                .id("test-room-id")
                 .name("test-room")
                 .type(Room.RoomType.PUBLIC)
+                .build();
+
+        user1 = User.builder().id(1L).username("user1").build();
+        user2 = User.builder().id(2L).username("user2").build();
+
+        directRoom = Room.builder()
+                .id("dm-123")
+                .type(Room.RoomType.DIRECT)
+                .build();
+        directRoom.getParticipants().addAll(Set.of(user1, user2));
+
+        publicRoom = Room.builder()
+                .id("pub-123")
+                .type(Room.RoomType.PUBLIC)
+                .creatorId(1L)
                 .build();
     }
 
     @Test
-    void testCreateRoom_Success() {
+    void deleteRoom_DirectMessage_ByParticipant_Success() {
         // Arrange
-        when(roomRepository.existsByName("test_room")).thenReturn(false);
-        // Map the new logic to return a placeholder Creator User
-        User mockCreator = new User();
-        mockCreator.setId(1L);
-        mockCreator.setUsername("test_creator_username");
+        when(roomRepository.findById("dm-123")).thenReturn(Optional.of(directRoom));
 
-        // FIXED: Service now looks up by ID, so we mock findById
-        when(userRepository.findById(1L)).thenReturn(Optional.of(mockCreator));
-
-        // Assuming 'room' refers to a Room object that would be returned by the save
-        // method.
-        // For a test, we can create a mock Room or use the argument passed to save.
-        Room mockSavedRoom = Room.builder()
-                .id(UUID.randomUUID().toString())
-                .name("test_room")
-                .type(Room.RoomType.PUBLIC)
-                .creatorId(1L)
-                .build();
-        when(roomRepository.save(any(Room.class))).thenReturn(mockSavedRoom);
-
-        // FIXED: Pass Long 1L instead of String "test_creator_username"
-        Room savedRoom = roomService.createRoom("test_room", Room.RoomType.PUBLIC, 1L);
+        // Act
+        roomService.deleteRoom("dm-123", user1.getId());
 
         // Assert
-        assertNotNull(savedRoom);
-        assertEquals("test_room", savedRoom.getName());
-        assertEquals(Room.RoomType.PUBLIC, savedRoom.getType());
-        assertNotNull(savedRoom.getId());
+        verify(messageRepository, times(1)).deleteByRoomId("dm-123");
+        verify(roomRepository, times(1)).deleteById("dm-123");
+        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/global-events"), any(java.util.Map.class));
+    }
 
+    @Test
+    void deleteRoom_DirectMessage_ByNonParticipant_ThrowsException() {
+        // Arrange
+        when(roomRepository.findById("dm-123")).thenReturn(Optional.of(directRoom));
+        Long nonParticipantId = 99L;
+
+        // Act & Assert
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
+            roomService.deleteRoom("dm-123", nonParticipantId);
+        });
+        assertEquals("Only participants can delete a DM", exception.getMessage());
+        verify(roomRepository, never()).deleteById(anyString());
+    }
+
+    @Test
+    void clearMessages_PublicRoom_ByCreator_Success() {
+        // Arrange
+        when(roomRepository.findById("pub-123")).thenReturn(Optional.of(publicRoom));
+
+        // Act
+        roomService.clearMessages("pub-123", user1.getId());
+
+        // Assert
+        verify(messageRepository, times(1)).deleteByRoomId("pub-123");
+        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/room/pub-123"), any(java.util.Map.class));
+    }
+
+    @Test
+    void clearMessages_PublicRoom_ByNonCreator_ThrowsException() {
+        // Arrange
+        when(roomRepository.findById("pub-123")).thenReturn(Optional.of(publicRoom));
+
+        // Act & Assert
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> {
+            roomService.clearMessages("pub-123", user2.getId());
+        });
+        assertEquals("Only the room admin can clear messages", exception.getMessage());
+        verify(messageRepository, never()).deleteByRoomId(anyString());
+    }
+
+    @Test
+    void testCreateRoom_Success() {
+        when(roomRepository.existsByName("test_room")).thenReturn(false);
+        // FIXED: Mock daily limit check
+        when(roomRepository.countByCreatorIdAndCreatedAtAfter(anyLong(), any())).thenReturn(0L);
+
+        User mockCreator = new User(); mockCreator.setId(1L); mockCreator.setUsername("test_creator_username");
+        when(userRepository.findById(1L)).thenReturn(Optional.of(mockCreator));
+
+        Room mockSavedRoom = Room.builder().id(UUID.randomUUID().toString()).name("test_room")
+                .type(Room.RoomType.PUBLIC).creatorId(1L).build();
+        when(roomRepository.save(any(Room.class))).thenReturn(mockSavedRoom);
+
+        Room savedRoom = roomService.createRoom("test_room", Room.RoomType.PUBLIC, 1L);
+
+        assertNotNull(savedRoom);
         verify(roomRepository).save(any(Room.class));
     }
 
     @Test
     void testCreateRoom_DuplicateName() {
-        // Arrange
+        // Mock daily limit check
+        when(roomRepository.countByCreatorIdAndCreatedAtAfter(anyLong(), any())).thenReturn(0L);
         when(roomRepository.existsByName("test_room")).thenReturn(true);
 
         assertThrows(IllegalArgumentException.class, () -> {
-            // FIXED: Pass Long 1L instead of String "test_creator_username"
             roomService.createRoom("test_room", Room.RoomType.PUBLIC, 1L);
         });
-
         verify(roomRepository, never()).save(any());
     }
 
@@ -276,19 +333,17 @@ class RoomServiceTest {
 
     @Test
     void testDeleteRoom_Success() {
-        // Arrange
         testRoom.setCreatorId(testUser1.getId());
 
         lenient().when(roomRepository.findById(testRoom.getId())).thenReturn(Optional.of(testRoom));
+        lenient().when(userRepository.findById(testUser1.getId())).thenReturn(Optional.of(testUser1));
 
-        // Make this stub lenient as well
-        lenient().when(userRepository.findById(testUser1.getId()))
-                .thenReturn(Optional.of(testUser1));
-
-        // Act
+        // Pass testRoom.getId() instead of literal string
         roomService.deleteRoom(testRoom.getId(), testUser1.getId());
 
-        // Assert
         verify(roomRepository).deleteById(testRoom.getId());
+        // Verify the new cascade and broadcast logic occurs
+        verify(messageRepository).deleteByRoomId(testRoom.getId());
+        verify(messagingTemplate).convertAndSend(eq("/topic/global-events"), any(Map.class));
     }
 }

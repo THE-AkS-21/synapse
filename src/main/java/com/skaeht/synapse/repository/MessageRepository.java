@@ -25,4 +25,9 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
      * Find messages by room ID, ordered by timestamp descending.
      */
     List<Message> findByRoomIdOrderByTimestampDesc(String roomId);
+
+    /**
+     * Delete room by roomId.
+     */
+    void deleteByRoomId(String roomId);
 }

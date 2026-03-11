@@ -3,6 +3,7 @@ package com.skaeht.synapse.controller;
 import com.skaeht.synapse.dto.PasswordUpdateRequest;
 import com.skaeht.synapse.dto.UserProfileResponse;
 import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.repository.UserRepository;
 import com.skaeht.synapse.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +13,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,6 +26,9 @@ public class UserController {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private UserRepository userRepository;
 
     /** Get the current authenticated user's profile (includes displayId). */
     @GetMapping("/me")
@@ -97,5 +102,10 @@ public class UserController {
         } else {
             return ResponseEntity.status(HttpStatus.CONFLICT).body("Username already taken");
         }
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<User>> searchUsers(@RequestParam String query) {
+        return ResponseEntity.ok(userRepository.findByUsernameContainingIgnoreCase(query));
     }
 }

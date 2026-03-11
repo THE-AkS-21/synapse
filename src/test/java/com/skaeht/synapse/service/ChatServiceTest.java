@@ -10,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -29,8 +30,16 @@ class ChatServiceTest {
     @Mock
     private RedisPublisher redisPublisher;
 
+    // Redis mocks for rate limiting
+    @Mock
+    private RedisTemplate<String, Object> redisTemplate;
+
     @Mock
     private RoomService roomService;
+
+
+    @Mock
+    private org.springframework.data.redis.core.ValueOperations<String, Object> valueOperations;
 
     @InjectMocks
     private ChatService chatService;
@@ -43,9 +52,12 @@ class ChatServiceTest {
         testUsername = "testuser";
         testContent = "Hello, World!";
 
-        // Use lenient() to allow this stub to be unused in some tests
         lenient().when(redisPublisher.publish(any(ChatMessage.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
+
+        // leniently mock Redis rate limiting to allow all messages in tests
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.increment(anyString())).thenReturn(1L);
     }
 
     @Test

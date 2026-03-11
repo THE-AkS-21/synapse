@@ -5,23 +5,21 @@ import com.skaeht.synapse.entity.Message;
 import com.skaeht.synapse.repository.MessageRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Service for handling chat message business logic with room-based routing.
- * Supports async processing for high-throughput messaging with optional
- * write-behind caching.
- */
 @Service
 @Slf4j
 public class ChatService {
 
     private static final int MAX_MESSAGE_LENGTH = 5000;
 
+    private final RedisTemplate<String, Object> redisTemplate;
     private final MessageRepository messageRepository;
     private final RedisPublisher redisPublisher;
     private final RoomService roomService;
@@ -29,11 +27,13 @@ public class ChatService {
     private final RedisStreamMessageBufferService redisStreamBufferService;
 
     public ChatService(
+            RedisTemplate<String, Object> redisTemplate,
             MessageRepository messageRepository,
             RedisPublisher redisPublisher,
             RoomService roomService,
             @Autowired(required = false) MessageBufferService messageBufferService,
             @Autowired(required = false) RedisStreamMessageBufferService redisStreamBufferService) {
+        this.redisTemplate = redisTemplate;
         this.messageRepository = messageRepository;
         this.redisPublisher = redisPublisher;
         this.roomService = roomService;
@@ -41,20 +41,21 @@ public class ChatService {
         this.redisStreamBufferService = redisStreamBufferService;
     }
 
-    /**
-     * Send a chat message to a specific room.
-     * If MessageBufferService is available, uses write-behind caching for async
-     * persistence.
-     * Otherwise falls back to synchronous database writes.
-     * 
-     * @param content        Message content
-     * @param senderUsername Username of sender
-     * @param roomId         Target room ID
-     * @return CompletableFuture with the sent message
-     */
     @Async
     @Transactional
     public CompletableFuture<ChatMessage> sendMessage(String content, Long senderId, String senderUsername, String roomId) {
+
+        // Rate limit messages (e.g., max 5 messages per 2 seconds)
+        String rateLimitKey = "rate_limit:msg:" + senderId;
+        Long msgCount = redisTemplate.opsForValue().increment(rateLimitKey);
+        if (msgCount != null && msgCount == 1) {
+            redisTemplate.expire(rateLimitKey, Duration.ofSeconds(2));
+        }
+        if (msgCount != null && msgCount > 5) {
+            log.warn("User {} is sending messages too fast", senderUsername);
+            throw new IllegalStateException("You are sending messages too fast. Please slow down.");
+        }
+
         // Validate message
         if (!isValidMessage(content)) {
             throw new IllegalArgumentException("Invalid message: empty or too long");
@@ -62,20 +63,15 @@ public class ChatService {
 
         long timestamp = System.currentTimeMillis();
 
-        // Create ChatMessage DTO with auto-generated ID and traceId
-        ChatMessage chatMessage = new ChatMessage(roomId,senderId, senderUsername, content, timestamp);
+        ChatMessage chatMessage = new ChatMessage(roomId, senderId, senderUsername, content, timestamp);
 
-        // Publish to Redis immediately for real-time delivery
         redisPublisher.publish(chatMessage);
         log.info("Published message {} to room {} from user {}", chatMessage.id(), roomId, senderUsername);
 
-        // Use buffer service if available, otherwise fall back to synchronous save
         if (messageBufferService != null) {
-            // Asynchronous persistence via buffer (FAST PATH)
             messageBufferService.bufferMessage(chatMessage);
             log.debug("Message {} buffered for async persistence", chatMessage.id());
         } else {
-            // Synchronous persistence (FALLBACK)
             Message dbMessage = Message.builder()
                     .messageId(chatMessage.id())
                     .roomId(chatMessage.roomId())
@@ -91,18 +87,12 @@ public class ChatService {
         return CompletableFuture.completedFuture(chatMessage);
     }
 
-    /**
-     * Send a message to the default "general" room
-     */
     @Async
     @Transactional
-    public CompletableFuture<ChatMessage> sendMessage(String content,Long senderId, String senderUsername) {
+    public CompletableFuture<ChatMessage> sendMessage(String content, Long senderId, String senderUsername) {
         return sendMessage(content, senderId, senderUsername, "general");
     }
 
-    /**
-     * Validate message content
-     */
     public boolean isValidMessage(String content) {
         return content != null &&
                 !content.trim().isEmpty() &&

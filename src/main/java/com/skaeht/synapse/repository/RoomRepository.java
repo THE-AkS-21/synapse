@@ -19,6 +19,11 @@ import java.util.Optional;
 public interface RoomRepository extends JpaRepository<Room, String> {
 
     /**
+     * Limit room creation to 20 rooms per user a day
+     */
+    long countByCreatorIdAndCreatedAtAfter(Long creatorId, java.time.LocalDateTime date);
+
+    /**
      * Find rooms by type
      */
     Page<Room> findByType(Room.RoomType type, Pageable pageable);

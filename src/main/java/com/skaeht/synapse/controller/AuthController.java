@@ -3,7 +3,10 @@ package com.skaeht.synapse.controller;
 import com.skaeht.synapse.dto.AuthResponse;
 import com.skaeht.synapse.dto.LoginRequest;
 import com.skaeht.synapse.dto.RegisterRequest;
+import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.security.JwtTokenProvider;
+import com.skaeht.synapse.service.PresenceService;
+import com.skaeht.synapse.service.RoomService;
 import com.skaeht.synapse.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +20,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * REST controller for authentication operations (login and registration).
@@ -33,6 +38,9 @@ public class AuthController {
 
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
+
+    @Autowired private PresenceService presenceService;
+    @Autowired private RoomService roomService;
 
     /**
      * Authenticate user and return JWT token.
@@ -104,5 +112,22 @@ public class AuthController {
             return ResponseEntity.status(status)
                     .body(java.util.Map.of("message", msg != null ? msg : "Registration failed"));
         }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logoutUser(Authentication authentication) {
+        if (authentication != null) {
+            var userOpt = userService.findByUsername(authentication.getName());
+            if (userOpt.isPresent()) {
+                String userId = String.valueOf(userOpt.get().getId());
+
+                // Instantly remove user from all rooms to broadcast OFFLINE status to everyone
+                List<Room> userRooms = roomService.getUserRooms(userOpt.get().getId());
+                for (Room room : userRooms) {
+                    presenceService.userLeftRoom(userId, room.getId());
+                }
+            }
+        }
+        return ResponseEntity.ok().build();
     }
 }

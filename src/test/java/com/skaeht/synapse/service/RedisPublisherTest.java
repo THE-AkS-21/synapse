@@ -1,6 +1,6 @@
 package com.skaeht.synapse.service;
 
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,7 +12,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -31,7 +30,7 @@ class RedisPublisherTest {
 
     @BeforeEach
     void setUp() {
-        testMessage = new ChatMessage("general",1L, "testuser", "Hello, World!", System.currentTimeMillis());
+        testMessage = new ChatMessage("general", 1L, "testuser", "Hello, World!", System.currentTimeMillis());
     }
 
     @Test
@@ -47,8 +46,8 @@ class RedisPublisherTest {
 
         // Verify channel is room-specific
         assertEquals("chat.room.general", channelCaptor.getValue());
-        assertEquals(testMessage.content(), messageCaptor.getValue().content());
-        assertEquals(testMessage.from(), messageCaptor.getValue().from());
+        assertEquals(testMessage.getContent(), messageCaptor.getValue().getContent());
+        assertEquals(testMessage.getSenderUsername(), messageCaptor.getValue().getSenderUsername());
     }
 
     @Test
@@ -64,7 +63,7 @@ class RedisPublisherTest {
     @Test
     void testPublish_DifferentRoom() throws Exception {
         // Arrange
-        ChatMessage roomMessage = new ChatMessage("tech-talk",1L, "testuser", "Test message", System.currentTimeMillis());
+        ChatMessage roomMessage = new ChatMessage("tech-talk", 1L, "testuser", "Test message", System.currentTimeMillis());
 
         // Act
         redisPublisher.publish(roomMessage).join();
@@ -79,7 +78,7 @@ class RedisPublisherTest {
     @Test
     void testPublish_NullRoomId() throws Exception {
         // Arrange - message with null roomId should default to "general"
-        ChatMessage nullRoomMessage = new ChatMessage(null,1L, "testuser", "Test", System.currentTimeMillis());
+        ChatMessage nullRoomMessage = new ChatMessage(null, 1L, "testuser", "Test", System.currentTimeMillis());
 
         // Act
         redisPublisher.publish(nullRoomMessage).join();

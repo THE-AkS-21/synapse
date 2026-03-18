@@ -1,6 +1,5 @@
 package com.skaeht.synapse.security;
 
-import com.skaeht.synapse.entity.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
@@ -17,6 +16,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
+/**
+ * Handles generation and validation of JWTs.
+ * REFACTORED: The JWT Subject is strictly the user's Email.
+ */
 @Component
 public class JwtTokenProvider {
 
@@ -30,41 +33,36 @@ public class JwtTokenProvider {
 
     @PostConstruct
     public void init() {
-        // Decode the Base64-encoded secret key
         this.key = Keys.hmacShaKeyFor(jwtSecret.getBytes());
     }
-
-    // --- Token Generation ---
 
     public String generateToken(Authentication authentication) {
         if (authentication == null || authentication.getPrincipal() == null) {
             throw new IllegalArgumentException("Authentication cannot be null");
         }
+        // Since UserDetails.getUsername() is mapped to email, we use it directly
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         return buildToken(new HashMap<>(), userDetails.getUsername());
     }
 
-    // Overloaded method to generate token directly from username
-    public String generateToken(String username) {
-        return buildToken(new HashMap<>(), username);
+    public String generateToken(String email) {
+        return buildToken(new HashMap<>(), email);
     }
 
-    private String buildToken(Map<String, Object> claims, String subject) {
+    private String buildToken(Map<String, Object> claims, String subjectEmail) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + jwtExpirationInMs);
 
         return Jwts.builder()
                 .setClaims(claims)
-                .setSubject(subject)
+                .setSubject(subjectEmail)
                 .setIssuedAt(now)
                 .setExpiration(expiryDate)
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
 
-    // --- Token Validation and Parsing ---
-
-    public String getUsernameFromToken(String token) {
+    public String getEmailFromToken(String token) {
         return getClaimFromToken(token, Claims::getSubject);
     }
 
@@ -74,25 +72,19 @@ public class JwtTokenProvider {
     }
 
     private Claims getAllClaimsFromToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(key)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
+        return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
     }
 
     public boolean validateToken(String token, UserDetails userDetails) {
-        final String username = getUsernameFromToken(token);
-        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        final String tokenEmail = getEmailFromToken(token);
+        return (tokenEmail.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
-    // Overloaded validation method (useful for WebSocket interceptor)
     public boolean validateToken(String token) {
         try {
             Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
             return !isTokenExpired(token);
         } catch (Exception e) {
-            // e.g., SignatureException, MalformedJwtException, ExpiredJwtException
             return false;
         }
     }

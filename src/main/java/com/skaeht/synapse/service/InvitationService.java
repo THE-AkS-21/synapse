@@ -30,77 +30,95 @@ public class InvitationService {
     private RoomRepository roomRepository;
 
     /**
-     * Send a room invitation to a user identified by their display ID.
-     * Only the room creator can invite users. Only PRIVATE rooms require
-     * invitations.
-     */
-    /**
-     * Send a room invitation to a user identified by their display ID.
-     * Only the room creator can invite users. Only PRIVATE rooms require
-     * invitations.
+     * Unified method called by the controller to route to the correct invitation type.
      */
     @Transactional
-    public Invitation sendRoomInvitation(String roomId, String fromUsername, String toDisplayId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        // Get the inviting user to compare IDs
-        User fromUser = userRepository.findByUsername(fromUsername)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + fromUsername));
-
-        // Use creatorId for permission check
-        if (room.getCreatorId() != null && !room.getCreatorId().equals(fromUser.getId())) {
-            throw new IllegalStateException("Only the room creator can invite members");
+    public Invitation createInvitation(Long senderId, Long targetId, String roomId) {
+        if (roomId != null && !roomId.trim().isEmpty()) {
+            return sendRoomInvitation(roomId, senderId, targetId);
+        } else {
+            return sendDMInvitation(senderId, targetId);
         }
-
-        User targetUser = userRepository.findByDisplayId(toDisplayId)
-                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-
-        if (targetUser.getUsername().equals(fromUsername)) {
-            throw new IllegalArgumentException("Cannot invite yourself");
-        }
-
-        // Check for duplicate pending invite
-        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
-                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
-            throw new IllegalStateException("Invitation already sent to this user");
-        }
-
-        Invitation invitation = Invitation.builder()
-                .roomId(roomId)
-                .roomName(room.getName())
-                .fromUsername(fromUsername)
-                .toUsername(targetUser.getUsername())
-                .type(Invitation.InvitationType.ROOM)
-                .build();
-
-        Invitation saved = invitationRepository.save(invitation);
-        log.info("Room invitation sent from {} to {} for room {}", fromUsername, targetUser.getUsername(), roomId);
-        return saved;
     }
 
     /**
-     * Send a DM invitation to a user identified by their display ID.
+     * Unified method called by the controller to route the accept/decline action.
      */
     @Transactional
-    public Invitation sendDMInvitation(String fromUsername, String toDisplayId) {
-        User targetUser = userRepository.findByDisplayId(toDisplayId)
-                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-
-        if (targetUser.getUsername().equals(fromUsername)) {
-            throw new IllegalArgumentException("Cannot invite yourself");
+    public void respondToInvitation(Long invitationId, boolean accept, String username) {
+        if (accept) {
+            acceptInvitation(invitationId, username);
+        } else {
+            declineInvitation(invitationId, username);
         }
-
-        Invitation invitation = Invitation.builder()
-                .fromUsername(fromUsername)
-                .toUsername(targetUser.getUsername())
-                .type(Invitation.InvitationType.DM)
-                .build();
-
-        Invitation saved = invitationRepository.save(invitation);
-        log.info("DM invitation sent from {} to {}", fromUsername, targetUser.getUsername());
-        return saved;
     }
+
+//    /**
+//     * Send a room invitation to a user identified by their display ID.
+//     * Only the room creator can invite users. Only PRIVATE rooms require invitations.
+//     */
+//    @Transactional
+//    public Invitation sendRoomInvitation(String roomId, String fromUsername, String toDisplayId) {
+//        Room room = roomRepository.findById(roomId)
+//                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+//
+//        // Get the inviting user to compare IDs
+//        User fromUser = userRepository.findByUsername(fromUsername)
+//                .orElseThrow(() -> new IllegalArgumentException("User not found: " + fromUsername));
+//
+//        // Use creatorId for permission check
+//        if (room.getCreator().getId() != null && !room.getCreator().getId().equals(fromUser.getId())) {
+//            throw new IllegalStateException("Only the room creator can invite members");
+//        }
+//
+//        User targetUser = userRepository.findByDisplayId(toDisplayId)
+//                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
+//
+//        if (targetUser.getUsername().equals(fromUsername)) {
+//            throw new IllegalArgumentException("Cannot invite yourself");
+//        }
+//
+//        // Check for duplicate pending invite
+//        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
+//                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
+//            throw new IllegalStateException("Invitation already sent to this user");
+//        }
+//
+//        Invitation invitation = Invitation.builder()
+//                .roomId(roomId)
+//                .roomName(room.getName())
+//                .fromUsername(fromUsername)
+//                .toUsername(targetUser.getUsername())
+//                .type(Invitation.InvitationType.ROOM)
+//                .build();
+//
+//        Invitation saved = invitationRepository.save(invitation);
+//        log.info("Room invitation sent from {} to {} for room {}", fromUsername, targetUser.getUsername(), roomId);
+//        return saved;
+//    }
+
+//    /**
+//     * Send a DM invitation to a user identified by their display ID.
+//     */
+//    @Transactional
+//    public Invitation sendDMInvitation(String fromUsername, String toDisplayId) {
+//        User targetUser = userRepository.findByDisplayId(toDisplayId)
+//                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
+//
+//        if (targetUser.getUsername().equals(fromUsername)) {
+//            throw new IllegalArgumentException("Cannot invite yourself");
+//        }
+//
+//        Invitation invitation = Invitation.builder()
+//                .fromUsername(fromUsername)
+//                .toUsername(targetUser.getUsername())
+//                .type(Invitation.InvitationType.DM)
+//                .build();
+//
+//        Invitation saved = invitationRepository.save(invitation);
+//        log.info("DM invitation sent from {} to {}", fromUsername, targetUser.getUsername());
+//        return saved;
+//    }
 
     /**
      * Get all pending invitations for a user.
@@ -157,5 +175,73 @@ public class InvitationService {
         invitation.setStatus(Invitation.InvitationStatus.DECLINED);
         invitationRepository.save(invitation);
         log.info("Invitation {} declined by {}", invitationId, username);
+    }
+
+    /**
+     * Send a room invitation to a user securely via their Long IDs.
+     */
+    @Transactional
+    public Invitation sendRoomInvitation(String roomId, Long senderId, Long targetId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+
+        User fromUser = userRepository.findById(senderId)
+                .orElseThrow(() -> new IllegalArgumentException("Sender not found"));
+
+        User targetUser = userRepository.findById(targetId)
+                .orElseThrow(() -> new IllegalArgumentException("Target user not found"));
+
+        // Use creatorId for permission check
+        if (room.getCreator() != null && !room.getCreator().getId().equals(fromUser.getId())) {
+            throw new IllegalStateException("Only the room creator can invite members");
+        }
+
+        if (targetUser.getId().equals(fromUser.getId())) {
+            throw new IllegalArgumentException("Cannot invite yourself");
+        }
+
+        // Check for duplicate pending invite
+        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
+                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
+            throw new IllegalStateException("Invitation already sent to this user");
+        }
+
+        Invitation invitation = Invitation.builder()
+                .roomId(roomId)
+                .roomName(room.getName())
+                .fromUsername(fromUser.getUsername()) // Safely mapped from the DB entity
+                .toUsername(targetUser.getUsername()) // Safely mapped from the DB entity
+                .type(Invitation.InvitationType.ROOM)
+                .build();
+
+        Invitation saved = invitationRepository.save(invitation);
+        log.info("Room invitation sent from {} to {} for room {}", fromUser.getUsername(), targetUser.getUsername(), roomId);
+        return saved;
+    }
+
+    /**
+     * Send a DM invitation securely via Long IDs.
+     */
+    @Transactional
+    public Invitation sendDMInvitation(Long senderId, Long targetId) {
+        User fromUser = userRepository.findById(senderId)
+                .orElseThrow(() -> new IllegalArgumentException("Sender not found"));
+
+        User targetUser = userRepository.findById(targetId)
+                .orElseThrow(() -> new IllegalArgumentException("Target user not found"));
+
+        if (targetUser.getId().equals(fromUser.getId())) {
+            throw new IllegalArgumentException("Cannot invite yourself");
+        }
+
+        Invitation invitation = Invitation.builder()
+                .fromUsername(fromUser.getUsername())
+                .toUsername(targetUser.getUsername())
+                .type(Invitation.InvitationType.DM)
+                .build();
+
+        Invitation saved = invitationRepository.save(invitation);
+        log.info("DM invitation sent from {} to {}", fromUser.getUsername(), targetUser.getUsername());
+        return saved;
     }
 }

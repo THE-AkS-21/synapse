@@ -1,7 +1,7 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.PasswordUpdateRequest;
-import com.skaeht.synapse.dto.UserProfileResponse;
+import com.skaeht.synapse.dto.request.PasswordUpdateRequest;
+import com.skaeht.synapse.dto.response.UserProfileResponse;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.UserRepository;
 import com.skaeht.synapse.service.UserService;
@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -33,8 +34,9 @@ public class UserController {
     /** Get the current authenticated user's profile (includes displayId). */
     @GetMapping("/me")
     public ResponseEntity<UserProfileResponse> getCurrentUser(Authentication authentication) {
-        String username = authentication.getName();
-        Optional<User> userOpt = userService.findByUsername(username);
+        // FIX: The JWT Subject (authentication.getName()) is the user's EMAIL, not their username.
+        String email = authentication.getName();
+        Optional<User> userOpt = userService.findByEmail(email);
 
         if (userOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
@@ -65,9 +67,9 @@ public class UserController {
     /** Update password. */
     @PutMapping("/me/password")
     public ResponseEntity<String> updatePassword(Authentication authentication,
-            @Valid @RequestBody PasswordUpdateRequest request) {
-        String username = authentication.getName();
-        Optional<User> userOpt = userService.findByUsername(username);
+                                                 @Valid @RequestBody PasswordUpdateRequest request) {
+        String email = authentication.getName();
+        Optional<User> userOpt = userService.findByEmail(email);
 
         if (userOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
@@ -79,7 +81,9 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Incorrect current password");
         }
 
-        boolean updated = userService.updatePassword(username, request.newPassword());
+        // FIX: Pass the EMAIL, not the username!
+        boolean updated = userService.updatePassword(email, request.newPassword());
+
         if (updated) {
             return ResponseEntity.ok("Password updated successfully");
         } else {
@@ -90,13 +94,29 @@ public class UserController {
     /** Update username. */
     @PutMapping("/me/username")
     public ResponseEntity<String> updateUsername(Authentication authentication,
-            @RequestBody Map<String, String> request) {
+                                                 @RequestBody Map<String, String> request) {
         String newUsername = request.get("username");
         if (newUsername == null || newUsername.trim().length() < 3) {
             return ResponseEntity.badRequest().body("Username must be at least 3 characters");
         }
-        String currentUsername = authentication.getName();
-        boolean updated = userService.updateUsername(currentUsername, newUsername.trim());
+
+        String email = authentication.getName();
+        Optional<User> userOpt = userService.findByEmail(email);
+
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        }
+
+        User user = userOpt.get();
+
+        // Prevent unnecessary DB calls if the user is just submitting their existing name
+        if (user.getUsername().equalsIgnoreCase(newUsername.trim())) {
+            return ResponseEntity.ok("Username is already " + newUsername);
+        }
+
+        // FIX: Pass the EMAIL, not the username, to match the Service method signature!
+        boolean updated = userService.updateUsername(email, newUsername.trim());
+
         if (updated) {
             return ResponseEntity.ok("Username updated successfully");
         } else {
@@ -105,7 +125,11 @@ public class UserController {
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<User>> searchUsers(@RequestParam String query) {
-        return ResponseEntity.ok(userRepository.findByUsernameContainingIgnoreCase(query));
+    public ResponseEntity<List<UserProfileResponse>> searchUsers(@RequestParam String query) {
+        List<User> rawUsers = userRepository.findByUsernameContainingIgnoreCase(query);
+        List<UserProfileResponse> safeUsers = rawUsers.stream()
+                .map(user -> new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail(), user.getDisplayId()))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(safeUsers);
     }
 }

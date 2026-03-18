@@ -1,4 +1,4 @@
-package com.skaeht.synapse.dto;
+package com.skaeht.synapse.dto.event;
 
 /**
  * DTO for typing events sent by clients

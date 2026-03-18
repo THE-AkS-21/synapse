@@ -1,4 +1,4 @@
-package com.skaeht.synapse.dto;
+package com.skaeht.synapse.dto.response;
 
 public record UserProfileResponse(
         Long id,

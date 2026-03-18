@@ -1,7 +1,7 @@
 package com.skaeht.synapse.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,7 +14,6 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**

@@ -1,4 +1,4 @@
-package com.skaeht.synapse.dto;
+package com.skaeht.synapse.dto.event;
 
 /**
  * Enum representing different types of presence events

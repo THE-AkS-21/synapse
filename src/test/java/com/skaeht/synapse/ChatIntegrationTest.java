@@ -1,10 +1,10 @@
 package com.skaeht.synapse;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skaeht.synapse.dto.AuthResponse;
-import com.skaeht.synapse.dto.ChatMessage;
-import com.skaeht.synapse.dto.RegisterRequest;
-import com.skaeht.synapse.dto.LoginRequest;
+import com.skaeht.synapse.dto.response.AuthResponse;
+import com.skaeht.synapse.dto.event.ChatMessage;
+import com.skaeht.synapse.dto.request.RegisterRequest;
+import com.skaeht.synapse.dto.request.LoginRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -101,7 +101,6 @@ class ChatIntegrationTest {
         StompHeaders stompHeaders = new StompHeaders();
         stompHeaders.add("Authorization", "Bearer " + jwtToken);
 
-        // Fix: Explicitly provide WebSocketHttpHeaders as null to resolve ambiguity
         StompSession session = stompClient.connectAsync(
                 wsUrl,
                 (WebSocketHttpHeaders) null,
@@ -109,7 +108,6 @@ class ChatIntegrationTest {
                 new StompSessionHandlerAdapter() {
                     @Override
                     public void afterConnected(StompSession session, StompHeaders connectedHeaders) {
-                        // Updated to subscribe to room-specific topic
                         session.subscribe("/topic/chat/general", new StompFrameHandler() {
                             @Override
                             public Type getPayloadType(StompHeaders headers) {
@@ -124,19 +122,17 @@ class ChatIntegrationTest {
                     }
                 }).get(5, TimeUnit.SECONDS);
 
-        // Give subscription time to register
         Thread.sleep(500);
 
-        // Send to the updated endpoint with room-based routing
-        ChatMessage messageToSend = new ChatMessage("general",1L, username, "Hello, World!", System.currentTimeMillis());
+        ChatMessage messageToSend = new ChatMessage("general", 1L, username, "Hello, World!", System.currentTimeMillis());
         session.send("/app/chat.sendMessage", messageToSend);
 
         ChatMessage receivedMessage = messageQueue.poll(10, TimeUnit.SECONDS);
 
         assertNotNull(receivedMessage, "Did not receive message from WebSocket");
-        assertEquals("Hello, World!", receivedMessage.content());
-        assertEquals(username, receivedMessage.from());
-        assertTrue(receivedMessage.timestamp() > 0);
+        assertEquals("Hello, World!", receivedMessage.getContent());
+        assertEquals(username, receivedMessage.getSenderUsername());
+        assertTrue(receivedMessage.getTimestamp() > 0);
 
         session.disconnect();
     }

@@ -1,77 +1,101 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
+import com.skaeht.synapse.entity.DirectMessage;
+import com.skaeht.synapse.entity.Message;
 import com.skaeht.synapse.entity.User;
-import com.skaeht.synapse.service.ChatService;
+import com.skaeht.synapse.service.DirectMessageService;
+import com.skaeht.synapse.service.MessageService;
 import com.skaeht.synapse.service.UserService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
-
 import java.security.Principal;
 
-/**
- * WebSocket controller for handling chat messages with room-based routing.
- * Supports sending messages to specific rooms and direct messages.
- */
-@Controller
 @Slf4j
+@Controller
 public class ChatController {
 
-    @Autowired
-    private ChatService chatService;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final MessageService roomMessageService;
+    private final DirectMessageService directMessageService;
+    private final UserService userService;
 
-    @Autowired
-    private UserService userService;
-
-    private Long getSenderId(String username) {
-        return userService.findByUsername(username)
-                .map(User::getId)
-                .orElseThrow(() -> new IllegalStateException("User not found: " + username));
+    public ChatController(SimpMessagingTemplate messagingTemplate, MessageService roomMessageService, DirectMessageService directMessageService, UserService userService) {
+        this.messagingTemplate = messagingTemplate;
+        this.roomMessageService = roomMessageService;
+        this.directMessageService = directMessageService;
+        this.userService = userService;
     }
-    /**
-     * Handle messages sent to a specific room.
-     * WebSocket destination: /app/room/{roomId}
-     * 
-     * @param roomId      The target room ID
-     * @param chatMessage The message payload
-     * @param principal   The authenticated user
-     */
+
+    // FIX: Match frontend send destination: /app/room/{roomId}
     @MessageMapping("/room/{roomId}")
-    public void sendToRoom(@DestinationVariable String roomId, @Payload ChatMessage chatMessage, Principal principal) {
-        String username = principal != null ? principal.getName() : chatMessage.from();
-        Long senderId = getSenderId(username);
-        log.info("User {} sending message to room {}", username, roomId);
-        chatService.sendMessage(chatMessage.content(), senderId, username, roomId);
+    public void sendRoomMessage(@DestinationVariable String roomId, @Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
+
+        // Ensure the roomId in the payload matches the destination variable
+        message.setRoomId(roomId);
+
+        Principal principal = headerAccessor.getUser();
+        if (principal != null && message.getSenderUsername() == null) {
+            // Fallback to principal name if frontend didn't send it, though ideally it should.
+            // Actually, the saveMessage service might handle fetching the user, but let's ensure
+            // we have what we need.
+            // Note: In your current implementation, messageService.saveMessage expects the ChatMessage to be fully formed.
+        }
+
+        try {
+            Message savedMsg = roomMessageService.saveMessage(message);
+
+            ChatMessage outMsg = ChatMessage.builder()
+                    .id(savedMsg.getMessageId())
+                    .roomId(savedMsg.getRoom().getId())
+                    .senderId(savedMsg.getSender().getId())
+                    .senderUsername(savedMsg.getSender().getUsername())
+                    .content(savedMsg.getContent())
+                    .timestamp(savedMsg.getTimestamp())
+                    .build();
+
+            // FIX: Broadcast to the exact topic the frontend is subscribed to: /topic/chat/{roomId}
+            messagingTemplate.convertAndSend("/topic/chat/" + roomId, outMsg);
+
+        } catch (Exception e) {
+            log.error("Failed to save and broadcast message in room {}", roomId, e);
+        }
     }
 
-    /**
-     * Handle messages sent to the default/general room.
-     * WebSocket destination: /app/chat
-     * 
-     * @param chatMessage The message payload
-     * @param principal   The authenticated user
-     */
-    @MessageMapping("/chat")
-    public void send(@Payload ChatMessage chatMessage, Principal principal) {
-        String username = principal != null ? principal.getName() : chatMessage.from();
-        Long senderId = getSenderId(username);
-        log.info("User {} sending message to general room", username);
-        chatService.sendMessage(chatMessage.content(), senderId, username);
-    }
+    @MessageMapping("/dm.send")
+    public void sendDirectMessage(@Payload ChatMessage dm, SimpMessageHeaderAccessor headerAccessor) {
+        Principal principal = headerAccessor.getUser();
+        if (principal == null || principal.getName() == null) return;
+        if (dm.getReceiverUsername() == null || dm.getContent() == null) return;
 
-    @MessageMapping("/chat.send")
-    public void sendMessage(ChatMessage message, Principal principal) {
-        String username = principal.getName();
-        Long senderId = getSenderId(username);
+        try {
+            // Find sender by EMAIL (since principal.getName() is usually the email from JWT)
+            User sender = userService.findByEmail(principal.getName()).orElseThrow();
+            // Assuming receiverUsername in payload is actually the username.
+            User receiver = userService.findByUsername(dm.getReceiverUsername()).orElseThrow();
 
-        message = new ChatMessage(
-                message.id(), message.roomId(), senderId, username,
-                message.content(), message.timestamp(), message.traceId());
+            DirectMessage savedDm = directMessageService.saveDirectMessage(sender.getId(), receiver.getId(), dm.getContent());
 
-        chatService.sendMessage(message.content(), senderId, username, message.roomId());
+            ChatMessage outDm = ChatMessage.builder()
+                    .id(String.valueOf(savedDm.getId()))
+                    .roomId("dm")
+                    .senderId(sender.getId())
+                    .senderUsername(sender.getUsername())
+                    .receiverUsername(receiver.getUsername())
+                    .content(savedDm.getContent())
+                    .timestamp(savedDm.getTimestamp().toEpochMilli())
+                    .build();
+
+            messagingTemplate.convertAndSendToUser(dm.getReceiverUsername(), "/queue/messages", outDm);
+            messagingTemplate.convertAndSendToUser(sender.getUsername(), "/queue/messages", outDm);
+
+        } catch (Exception e) {
+            log.error("Error processing DM", e);
+        }
     }
 }

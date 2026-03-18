@@ -1,6 +1,6 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Message;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.MessageRepository;
@@ -27,22 +27,19 @@ public class MessageController {
     public ResponseEntity<List<ChatMessage>> getRoomHistory(@PathVariable String roomId) {
         List<Message> messages = messageRepository.findByRoomIdOrderByTimestampDesc(roomId);
 
-        // Extract unique sender IDs to efficiently fetch users
-        List<Long> senderIds = messages.stream().map(Message::getSenderId).distinct().toList();
-
-        // Map sender IDs to usernames
+        List<Long> senderIds = messages.stream().map(msg -> msg.getSender().getId()).distinct().toList();
         Map<Long, String> userIdToUsername = userRepository.findAllById(senderIds).stream()
                 .collect(Collectors.toMap(User::getId, User::getUsername));
 
-        // Convert raw DB Messages to ChatMessage DTOs (which include both ID and Username)
-        List<ChatMessage> chatMessages = messages.stream().map(msg -> new ChatMessage(
-                msg.getMessageId(),
-                msg.getRoomId(),
-                msg.getSenderId(),
-                userIdToUsername.getOrDefault(msg.getSenderId(), "Unknown User"), // Safe fallback
-                msg.getContent(),
-                msg.getTimestamp()
-        )).toList();
+        List<ChatMessage> chatMessages = messages.stream().map(msg -> ChatMessage.builder()
+                .id(msg.getMessageId())
+                .roomId(msg.getRoom().getId())
+                .senderId(msg.getSender().getId())
+                .senderUsername(userIdToUsername.getOrDefault(msg.getSender().getId(), "Unknown User"))
+                .content(msg.getContent())
+                .timestamp(msg.getTimestamp())
+                .build()
+        ).collect(Collectors.toList());
 
         return ResponseEntity.ok(chatMessages);
     }

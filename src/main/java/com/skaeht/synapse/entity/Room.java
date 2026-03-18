@@ -8,10 +8,6 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * Entity representing a chat room or channel.
- * Supports different room types: PUBLIC, PRIVATE, DIRECT
- */
 @Entity
 @Table(name = "rooms", indexes = {
         @Index(name = "idx_room_type", columnList = "type"),
@@ -38,13 +34,10 @@ public class Room {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    /** Stable FK to users.id — NOT affected by username changes */
-    @Column(name = "creator_id")
-    private Long creatorId;
-
-    /** Kept for fallback display only — do not use for permission checks */
-//    @Column(name = "creator_username", length = 100)
-//    private String creatorUsername;
+    // NORMALIZATION: Strict Foreign Key to users table
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "creator_id")
+    private User creator;
 
     @Column(name = "theme", length = 50)
     @Builder.Default
@@ -52,7 +45,11 @@ public class Room {
 
     @JsonIgnore
     @ManyToMany
-    @JoinTable(name = "room_participants", joinColumns = @JoinColumn(name = "room_id"), inverseJoinColumns = @JoinColumn(name = "user_id"))
+    @JoinTable(
+            name = "room_participants",
+            joinColumns = @JoinColumn(name = "room_id"),
+            inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
     @Builder.Default
     private Set<User> participants = new HashSet<>();
 
@@ -63,12 +60,9 @@ public class Room {
         }
     }
 
-    /**
-     * Room type enumeration
-     */
     public enum RoomType {
-        PUBLIC, // Open to all users
+        PUBLIC,  // Open to all users
         PRIVATE, // Invite-only
-        DIRECT // One-to-one conversation
+        DIRECT   // Required for 1-on-1 DM sync with the frontend
     }
 }

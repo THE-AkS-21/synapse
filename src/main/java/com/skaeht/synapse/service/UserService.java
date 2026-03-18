@@ -2,9 +2,11 @@ package com.skaeht.synapse.service;
 
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.UserRepository;
+import com.skaeht.synapse.security.UserDetailsServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,7 @@ import java.util.Optional;
 
 /**
  * Service for managing user-related operations.
+ * Enforces email-centric queries and caching.
  */
 @Service
 public class UserService {
@@ -29,18 +32,12 @@ public class UserService {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    /**
-     * Register a new user.
-     *
-     * @param username    The username
-     * @param email       The email
-     * @param rawPassword The raw password (will be encoded)
-     * @return The created user
-     * @throws IllegalArgumentException if username or email already exists
-     */
+    @Autowired
+    private UserDetailsServiceImpl userDetailsService;
+
     @Transactional
     public User registerUser(String username, String email, String rawPassword) {
-        log.info("Registering new user: {}", username);
+        log.info("Registering new user email: {}", email);
 
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("Username already exists: " + username);
@@ -57,22 +54,16 @@ public class UserService {
                 .displayId(generateDisplayId())
                 .build();
 
-        User savedUser = userRepository.save(user);
-        log.info("User registered successfully: {} (displayId: {})", username, savedUser.getDisplayId());
-        return savedUser;
+        return userRepository.save(user);
     }
 
-    /** Generate a unique alphanumeric display ID in format XXXX-XXXX-XXXX */
     private String generateDisplayId() {
         String candidate;
         do {
             StringBuilder sb = new StringBuilder(14);
             for (int i = 0; i < 14; i++) {
-                if (i == 4 || i == 9) {
-                    sb.append('-');
-                } else {
-                    sb.append(DISPLAY_ID_CHARS.charAt(SECURE_RANDOM.nextInt(DISPLAY_ID_CHARS.length())));
-                }
+                if (i == 4 || i == 9) sb.append('-');
+                else sb.append(DISPLAY_ID_CHARS.charAt(SECURE_RANDOM.nextInt(DISPLAY_ID_CHARS.length())));
             }
             candidate = sb.toString();
         } while (userRepository.findByDisplayId(candidate).isPresent());
@@ -80,12 +71,13 @@ public class UserService {
     }
 
     /**
-     * Find user by username with caching.
-     *
-     * @param username The username to search for
-     * @return Optional containing the user if found
+     * Cache uses EMAIL strictly as requested.
      */
-    @Cacheable(value = "users", key = "#username")
+    @Cacheable(value = "users", key = "#email")
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
+    }
+
     public Optional<User> findByUsername(String username) {
         return userRepository.findByUsername(username);
     }
@@ -94,83 +86,49 @@ public class UserService {
         return userRepository.findByDisplayId(displayId);
     }
 
-    /**
-     * Find user by email.
-     *
-     * @param email The email to search for
-     * @return Optional containing the user if found
-     */
-    public Optional<User> findByEmail(String email) {
-        return userRepository.findByEmail(email);
-    }
-
-    /**
-     * Check if username exists.
-     *
-     * @param username The username to check
-     * @return true if exists, false otherwise
-     */
     public boolean usernameExists(String username) {
         return userRepository.existsByUsername(username);
     }
 
-    /**
-     * Check if email exists.
-     *
-     * @param email The email to check
-     * @return true if exists, false otherwise
-     */
     public boolean emailExists(String email) {
         return userRepository.existsByEmail(email);
     }
 
-    /**
-     * Get total user count.
-     *
-     * @return Total number of registered users
-     */
     public long getTotalUserCount() {
         return userRepository.count();
     }
 
-    /**
-     * Update user password.
-     *
-     * @param username    The username
-     * @param newPassword The new password (raw)
-     * @return true if updated successfully
-     */
     @Transactional
-    public boolean updatePassword(String username, String newPassword) {
-        Optional<User> userOpt = userRepository.findByUsername(username);
+    @CacheEvict(value = "users", key = "#email")
+    public boolean updatePassword(String email, String newPassword) {
+        Optional<User> userOpt = userRepository.findByEmail(email);
 
         if (userOpt.isPresent()) {
             User user = userOpt.get();
             user.setPassword(passwordEncoder.encode(newPassword));
             userRepository.save(user);
-            log.info("Password updated for user: {}", username);
+
+            // Sync: Evict the session cache as well
+            userDetailsService.evictUserCache(email);
+
+            log.info("Password updated and cache evicted for email: {}", email);
             return true;
         }
-
         return false;
     }
 
-    /**
-     * Update username.
-     * 
-     * @return true if updated, false if username taken
-     */
     @Transactional
-    public boolean updateUsername(String currentUsername, String newUsername) {
-        if (userRepository.existsByUsername(newUsername)) {
-            return false;
-        }
-        Optional<User> userOpt = userRepository.findByUsername(currentUsername);
+    public boolean updateUsername(String email, String newUsername) {
+        if (userRepository.existsByUsername(newUsername)) return false;
+
+        Optional<User> userOpt = userRepository.findByEmail(email);
         if (userOpt.isPresent()) {
             User user = userOpt.get();
             user.setUsername(newUsername);
             userRepository.save(user);
-            log.info("Username updated: {} -> {}", currentUsername, newUsername);
+
+            // Sync: Evict the session cache to refresh details payload on next request
+            userDetailsService.evictUserCache(email);
             return true;
         }
         return false;

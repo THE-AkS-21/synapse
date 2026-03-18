@@ -4,8 +4,6 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -16,68 +14,47 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
+    private final JwtTokenProvider tokenProvider;
+    private final UserDetailsService userDetailsService;
 
-    @Autowired
-    private UserDetailsService userDetailsService; // This is our UserDetailsServiceImpl
+    public JwtAuthFilter(JwtTokenProvider tokenProvider, UserDetailsService userDetailsService) {
+        this.tokenProvider = tokenProvider;
+        this.userDetailsService = userDetailsService;
+    }
 
     @Override
-    protected void doFilterInternal(
-            @NonNull HttpServletRequest request,
-            @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain) throws ServletException, IOException {
-
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
         try {
-            // Let OPTIONS requests through, they won't have the Authorization header
-            if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
-                filterChain.doFilter(request, response);
-                return;
-            }
+            String jwt = parseJwt(request);
+            if (jwt != null && tokenProvider.validateToken(jwt)) {
+                // Extracts EMAIL from the JWT Subject
+                String email = tokenProvider.getEmailFromToken(jwt);
 
-            String jwt = getJwtFromRequest(request);
-
-            // Check if token is valid
-            if (StringUtils.hasText(jwt) && jwtTokenProvider.validateToken(jwt)) {
-                // Get username from token
-                String username = jwtTokenProvider.getUsernameFromToken(jwt);
-
-                // Load user details (and set up Spring Security context)
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                // Loads using email
+                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        username,
-                        null,
-                        Collections.emptyList());
-
-                SecurityContextHolder.getContext().setAuthentication(authToken);
-            } else {
-                // Token validation failed or no token
+                SecurityContextHolder.getContext().setAuthentication(authentication);
             }
-        } catch (Exception ex) {
-            // In case of error, we don't set the authentication
-            logger.error("Could not set user authentication in security context", ex);
+        } catch (Exception e) {
+            logger.error("Cannot set user authentication: {}", e);
         }
 
-        // Continue the filter chain
         filterChain.doFilter(request, response);
     }
 
-    private String getJwtFromRequest(HttpServletRequest request) {
-        String bearerToken = request.getHeader("Authorization");
-
-        // Check if header is present and starts with "Bearer "
-        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7); // Return the token part
+    private String parseJwt(HttpServletRequest request) {
+        String headerAuth = request.getHeader("Authorization");
+        if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
+            return headerAuth.substring(7);
         }
         return null;
     }

@@ -1,6 +1,6 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.UserProfileResponse;
+import com.skaeht.synapse.dto.response.UserProfileResponse;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.service.RoomService;
 import org.junit.jupiter.api.Test;

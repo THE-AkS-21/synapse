@@ -1,80 +1,42 @@
 package com.skaeht.synapse.service;
 
 import com.skaeht.synapse.entity.Message;
-
 import com.skaeht.synapse.repository.MessageRepository;
+import com.skaeht.synapse.repository.RoomRepository;
+import com.skaeht.synapse.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.connection.stream.*;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Slf4j
-public class StreamMessageConsumer {
+public class StreamMessageConsumer implements StreamListener<String, MapRecord<String, String, String>> {
 
-    private final RedisTemplate<String, Object> redisTemplate;
     private final MessageRepository messageRepository;
+    private final RoomRepository roomRepository;
+    private final UserRepository userRepository;
 
-    private static final String STREAM = "messages:pending:stream";
-    private static final String GROUP = "batch-processor";
-    private static final String CONSUMER = "consumer-1";
-
-    @Scheduled(fixedDelay = 2000)
-    public void consumeMessages() {
+    @Override
+    public void onMessage(MapRecord<String, String, String> record) {
         try {
-            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-                    Consumer.from(GROUP, CONSUMER),
-                    StreamReadOptions.empty().count(100).block(Duration.ofSeconds(1)),
-                    StreamOffset.create(STREAM, ReadOffset.lastConsumed()));
+            log.debug("Consumed message from stream: {}", record.getId());
+            Message message = new Message();
 
-            if (records == null || records.isEmpty())
-                return;
+            message.setMessageId(record.getValue().get("id"));
+            message.setRoom(roomRepository.getReferenceById(record.getValue().get("roomId")));
+            message.setSender(userRepository.getReferenceById(Long.parseLong(record.getValue().get("senderId"))));
+            message.setContent(record.getValue().get("content"));
+            message.setTimestamp(Long.parseLong(record.getValue().get("timestamp")));
+            message.setDeleted(false);
 
-            List<Message> batch = new ArrayList<>();
-            List<RecordId> recordIds = new ArrayList<>();
+            messageRepository.save(message);
 
-            for (MapRecord<String, Object, Object> record : records) {
-                try {
-                    Message message = new Message();
-                    message.setMessageId((String) record.getValue().get("id"));
-                    message.setRoomId((String) record.getValue().get("roomId"));
-                    message.setContent((String) record.getValue().get("content"));
-                    Object senderIdRaw = record.getValue().get("senderId");
-                    if (senderIdRaw != null) {
-                        message.setSenderId(Long.parseLong(senderIdRaw.toString()));
-                    }
-                    message.setTimestamp(Long.parseLong((String) record.getValue().get("timestamp")));
-
-                    batch.add(message);
-                    recordIds.add(record.getId());
-                } catch (Exception e) {
-                    log.error("Failed to parse message properties {}", record.getId(), e);
-                }
-            }
-
-            if (!batch.isEmpty()) {
-                try {
-                    messageRepository.saveAll(batch);
-                    log.info("Persisted {} messages to PostgreSQL", batch.size());
-
-                    // Only acknowledge the consumed records AFTER safely putting them in the
-                    // database!
-                    RecordId[] ids = recordIds.toArray(new RecordId[0]);
-                    redisTemplate.opsForStream().acknowledge(STREAM, GROUP, ids);
-                } catch (Exception e) {
-                    log.error("Failed to persist message batch to database, aborting acknowledge...", e);
-                }
-            }
         } catch (Exception e) {
-            log.debug("Redis connection unavailable for stream consumption (likely test environment or shutdown): {}",
-                    e.getMessage());
+            log.error("Failed to process stream message: {}", record.getId(), e);
+            // In a production app, you might want to implement a Dead Letter Queue (DLQ) here
         }
     }
 }

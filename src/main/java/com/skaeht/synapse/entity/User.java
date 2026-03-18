@@ -1,25 +1,18 @@
 package com.skaeht.synapse.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.userdetails.UserDetails;
+import lombok.*;
 
-import java.util.Collection;
-import java.util.List;
+import java.time.Instant;
 
+@Entity
+@Table(name = "users")
 @Data
-@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Entity
-@Table(name = "_user") // "user" is a reserved keyword in PostgreSQL
-public class User implements UserDetails {
-
+@Builder
+public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -27,56 +20,18 @@ public class User implements UserDetails {
     @Column(unique = true, nullable = false)
     private String username;
 
+    // FIX: Added missing displayId field required by UserService and Controllers
+    @Column(unique = true)
+    private String displayId;
+
     @Column(unique = true, nullable = false)
     private String email;
 
+    @JsonIgnore
     @Column(nullable = false)
     private String password;
 
-    /**
-     * Human-readable display ID shown in profile settings — format XXXX-XXXX-XXXX
-     */
-    @Column(name = "display_id", unique = true, length = 14)
-    private String displayId;
+    private String avatarUrl;
 
-    // We can add roles, but for a simple chat, one role is fine
-    // For simplicity, we'll hardcode the role
-    // @Enumerated(EnumType.STRING)
-    // private Role role;
-
-    @Override
-    public Collection<? extends GrantedAuthority> getAuthorities() {
-        // For this simple app, every user is a 'USER'
-        return List.of(new SimpleGrantedAuthority("ROLE_USER"));
-    }
-
-    @Override
-    public String getPassword() {
-        return password;
-    }
-
-    @Override
-    public String getUsername() {
-        return username;
-    }
-
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
-
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
+    private Instant lastSeen;
 }

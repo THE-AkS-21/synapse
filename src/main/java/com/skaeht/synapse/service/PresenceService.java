@@ -1,7 +1,8 @@
 package com.skaeht.synapse.service;
 
-import com.skaeht.synapse.dto.PresenceEvent;
-import com.skaeht.synapse.dto.PresenceType;
+import com.skaeht.synapse.dto.event.PresenceEvent;
+import com.skaeht.synapse.dto.event.PresenceType;
+import com.skaeht.synapse.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -10,18 +11,16 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Service managing user presence (online/offline/typing) using Redis Sets.
- * Supports distributed presence tracking across multiple server instances.
- */
 @Slf4j
 @Service
-@ConditionalOnProperty(name = "presence.enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnProperty(name = "presence.enabled", havingValue = "true", matchIfMissing = true)
 public class PresenceService {
 
     private static final String ONLINE_KEY_PREFIX = "room:%s:online";
@@ -34,15 +33,19 @@ public class PresenceService {
 
     private final StringRedisTemplate redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+    private final UserRepository userRepository;
+
     private final Counter presenceEventsCounter;
     private final Counter heartbeatMissedCounter;
 
     public PresenceService(
             StringRedisTemplate redisTemplate,
             SimpMessagingTemplate messagingTemplate,
+            UserRepository userRepository,
             MeterRegistry meterRegistry) {
         this.redisTemplate = redisTemplate;
         this.messagingTemplate = messagingTemplate;
+        this.userRepository = userRepository;
 
         this.presenceEventsCounter = Counter.builder("presence.events.processed")
                 .description("Total number of presence events processed")
@@ -54,9 +57,6 @@ public class PresenceService {
                 .register(meterRegistry);
     }
 
-    /**
-     * User joined a room - add to online set and broadcast
-     */
     public void userJoinedRoom(String userId, String roomId) {
         String onlineKey = String.format(ONLINE_KEY_PREFIX, roomId);
         String userRoomsKey = String.format(USER_ROOMS_PREFIX, userId);
@@ -71,9 +71,6 @@ public class PresenceService {
         broadcastPresenceUpdate(roomId, userId, PresenceType.ONLINE);
     }
 
-    /**
-     * User left a room - remove from online and typing sets, broadcast
-     */
     public void userLeftRoom(String userId, String roomId) {
         String onlineKey = String.format(ONLINE_KEY_PREFIX, roomId);
         String typingKey = String.format(TYPING_KEY_PREFIX, roomId);
@@ -89,9 +86,6 @@ public class PresenceService {
         broadcastPresenceUpdate(roomId, userId, PresenceType.OFFLINE);
     }
 
-    /**
-     * User started typing in a room
-     */
     public void userStartedTyping(String userId, String roomId) {
         String typingKey = String.format(TYPING_KEY_PREFIX, roomId);
 
@@ -104,9 +98,6 @@ public class PresenceService {
         broadcastPresenceUpdate(roomId, userId, PresenceType.TYPING);
     }
 
-    /**
-     * User stopped typing in a room
-     */
     public void userStoppedTyping(String userId, String roomId) {
         String typingKey = String.format(TYPING_KEY_PREFIX, roomId);
 
@@ -118,40 +109,29 @@ public class PresenceService {
         broadcastPresenceUpdate(roomId, userId, PresenceType.STOPPED_TYPING);
     }
 
-    /**
-     * Update user heartbeat with TTL for auto-cleanup
-     */
+    // 1. FAST PATH: Memory-Bound Heartbeat
     public void updateHeartbeat(String userId) {
         String heartbeatKey = String.format(HEARTBEAT_KEY_PREFIX, userId);
 
         redisTemplate.opsForValue().set(
                 heartbeatKey,
-                String.valueOf(System.currentTimeMillis()),
+                Instant.now().toString(),
                 HEARTBEAT_TTL_SECONDS,
                 TimeUnit.SECONDS);
 
         log.debug("Updated heartbeat for user {}", userId);
     }
 
-    /**
-     * Get online users in a room
-     */
     public Set<String> getOnlineUsers(String roomId) {
         String onlineKey = String.format(ONLINE_KEY_PREFIX, roomId);
         return redisTemplate.opsForSet().members(onlineKey);
     }
 
-    /**
-     * Get typing users in a room
-     */
     public Set<String> getTypingUsers(String roomId) {
         String typingKey = String.format(TYPING_KEY_PREFIX, roomId);
         return redisTemplate.opsForSet().members(typingKey);
     }
 
-    /**
-     * Broadcast presence update to all room participants
-     */
     private void broadcastPresenceUpdate(String roomId, String userId, PresenceType type) {
         Set<String> onlineUsers = getOnlineUsers(roomId);
         Set<String> typingUsers = getTypingUsers(roomId);
@@ -171,17 +151,29 @@ public class PresenceService {
                 type, userId, roomId, destination);
     }
 
-    /**
-     * Scheduled cleanup of stale users (missed heartbeats)
-     * Runs every 30 seconds
-     */
-    @Scheduled(fixedRateString = "${presence.cleanup.interval.ms:30000}")
-    public void cleanupStaleUsers() {
-        log.debug("Running stale user cleanup");
+    // 2. WRITE-BEHIND CACHE: Background Sync to Postgres
+    @Scheduled(fixedRate = 300000) // Runs every 5 minutes
+    @Transactional
+    public void syncPresenceToDatabase() {
+        // Scanning for all active heartbeats
+        Set<String> keys = redisTemplate.keys("user:*:heartbeat");
+        if (keys == null || keys.isEmpty()) return;
 
-        // This is a simplified version - in production, you'd scan all user heartbeat
-        // keys
-        // For now, we rely on TTL expiration and handle it in the WebSocket disconnect
-        // event
+        log.info("Write-Behind Sync: Updating last_seen in Postgres for {} active users", keys.size());
+
+        for (String key : keys) {
+            try {
+                // Extract userId (which is actually the email) from "user:{userId}:heartbeat"
+                String userEmail = key.split(":")[1];
+
+                // FIX: Use findByEmail instead of findById, since the keys are storing email addresses
+                userRepository.findByEmail(userEmail).ifPresent(user -> {
+                    user.setLastSeen(Instant.now());
+                    userRepository.save(user);
+                });
+            } catch (Exception e) {
+                log.error("Failed to sync presence for key {}", key, e);
+            }
+        }
     }
 }

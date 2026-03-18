@@ -1,4 +1,4 @@
-package com.skaeht.synapse.dto;
+package com.skaeht.synapse.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 

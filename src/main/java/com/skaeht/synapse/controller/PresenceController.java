@@ -1,6 +1,6 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.TypingEvent;
+import com.skaeht.synapse.dto.event.TypingEvent;
 import com.skaeht.synapse.service.PresenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +70,7 @@ public class PresenceController {
 
         String userId = principal.getName();
 
+        // This correctly routes to the public service methods instead of broadcastPresence
         if (event.isTyping()) {
             presenceService.userStartedTyping(userId, roomId);
         } else {

@@ -36,18 +36,19 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
                 if (jwtTokenProvider.validateToken(token)) {
 
-                    String username = jwtTokenProvider.getUsernameFromToken(token);
+                    // Update: Extract email instead of username
+                    String email = jwtTokenProvider.getEmailFromToken(token);
 
                     Authentication authentication =
                             new UsernamePasswordAuthenticationToken(
-                                    username,
+                                    email, // Use email as the principal identifier
                                     null,
                                     Collections.emptyList()
                             );
 
                     accessor.setUser(authentication);
 
-                    log.info("WebSocket authenticated user: {}", username);
+                    log.info("WebSocket authenticated user email: {}", email);
                 }
             }
         }

@@ -1,91 +1,65 @@
 package com.skaeht.synapse.service;
 
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Message;
+import com.skaeht.synapse.entity.Room;
+import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.MessageRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import com.skaeht.synapse.repository.RoomRepository;
+import com.skaeht.synapse.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
+import java.util.UUID;
 
-/**
- * Service for managing message operations including retrieval and history.
- */
+@Slf4j
 @Service
-@Transactional(readOnly = true)
+@RequiredArgsConstructor
 public class MessageService {
 
-    @Autowired
-    private MessageRepository messageRepository;
+    private final MessageRepository messageRepository;
+    private final UserRepository userRepository;
+    private final RoomRepository roomRepository;
 
-    /**
-     * Get message history with pagination.
-     *
-     * @param page Page number (0-indexed)
-     * @param size Number of messages per page
-     * @return Page of messages sorted by timestamp descending
-     */
-    public Page<Message> getMessageHistory(int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "timestamp"));
-        return messageRepository.findAll(pageable);
-    }
-
-    /**
-     * Get recent messages (last N messages).
-     *
-     * @param limit Maximum number of messages to retrieve
-     * @return List of recent messages
-     */
-    public List<Message> getRecentMessages(int limit) {
-        Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "timestamp"));
-        return messageRepository.findAll(pageable).getContent();
-    }
-
-    /**
-     * Get messages by sender username.
-     *
-     * @param senderId The sender's Id
-     * @param page     Page number
-     * @param size     Page size
-     * @return Page of messages from the specified user
-     */
-    public Page<Message> getMessagesBySenderId(Long senderId, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "timestamp"));
-        return messageRepository.findBySenderId(senderId, pageable); // Requires updating MessageRepository
-    }
-
-    /**
-     * Get a specific message by ID.
-     *
-     * @param id The message ID
-     * @return Optional containing the message if found
-     */
-    public Optional<Message> getMessageById(Long id) {
-        return messageRepository.findById(id);
-    }
-
-    /**
-     * Get total message count.
-     *
-     * @return Total number of messages
-     */
-    public long getTotalMessageCount() {
-        return messageRepository.count();
-    }
-
-    /**
-     * Delete old messages (cleanup operation).
-     *
-     * @param beforeTimestamp Delete messages older than this timestamp
-     * @return Number of deleted messages
-     */
     @Transactional
-    public long deleteOldMessages(long beforeTimestamp) {
-        return messageRepository.deleteByTimestampBefore(beforeTimestamp);
+    public Message saveMessage(ChatMessage chatMessage) {
+        User sender = userRepository.findById(chatMessage.getSenderId())
+                .orElseThrow(() -> new IllegalArgumentException("Sender not found"));
+
+        Room room = roomRepository.findById(chatMessage.getRoomId())
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        Message message = Message.builder()
+                .messageId(chatMessage.getId() != null ? chatMessage.getId() : UUID.randomUUID().toString())
+                .room(room)
+                .sender(sender)
+                .content(chatMessage.getContent())
+                .timestamp(chatMessage.getTimestamp())
+                .isDeleted(false)
+                .build();
+
+        return messageRepository.save(message);
+    }
+
+    public List<Message> getRoomMessages(String roomId) {
+        return messageRepository.findByRoomIdOrderByTimestampAsc(roomId);
+    }
+
+    @Transactional
+    public Message softDeleteMessage(Long messageId, Long requesterId) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        if (!message.getSender().getId().equals(requesterId) &&
+                !message.getRoom().getCreator().getId().equals(requesterId)) {
+            throw new SecurityException("Not authorized to delete this message");
+        }
+
+        message.setDeleted(true);
+        message.setContent("");
+        return messageRepository.save(message);
     }
 }

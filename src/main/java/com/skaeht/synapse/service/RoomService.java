@@ -1,5 +1,6 @@
 package com.skaeht.synapse.service;
 
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.exception.ResourceNotFoundException;
@@ -26,6 +27,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final MessageRepository messageRepository;
+    private final RedisPublisher redisPublisher;
     private final SecureRandom secureRandom = new SecureRandom();
 
     private String generateNumericRoomId() {
@@ -156,6 +158,15 @@ public class RoomService {
 
         room.getParticipants().remove(userToRemove);
         roomRepository.save(room);
+
+        ChatMessage removalEvent = new ChatMessage(
+                roomId,
+                0L, // System ID
+                "SYSTEM",
+                "USER_REMOVED:" + userId, // Special command string
+                System.currentTimeMillis()
+        );
+        redisPublisher.publish(removalEvent);
     }
 
     @Transactional
@@ -202,7 +213,6 @@ public class RoomService {
     public void clearMessages(String roomId, Long requesterId) {
         Room room = getRoom(roomId);
 
-        // Handle Direct Messages vs Group Rooms safely
         if (room.getType() == Room.RoomType.DIRECT) {
             boolean isParticipant = room.getParticipants().stream()
                     .anyMatch(p -> p.getId().equals(requesterId));

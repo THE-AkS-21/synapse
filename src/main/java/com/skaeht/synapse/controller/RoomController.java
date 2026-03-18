@@ -36,7 +36,7 @@ public class RoomController {
 
         if (room.getParticipants() != null) {
             map.put("participants", room.getParticipants().stream()
-                    .map(p -> Map.of("id", p.getId(), "username", p.getUsername()))
+                    .map(p -> Map.of("id", p.getId(), "username", p.getUsername(), "displayId", p.getDisplayId()))
                     .collect(Collectors.toList()));
         }
 
@@ -106,10 +106,8 @@ public class RoomController {
             @PathVariable String roomId,
             @PathVariable Long userId,
             Authentication authentication) {
-        var requesterOpt = userService.findByEmail(authentication.getName());
-        if (requesterOpt.isEmpty()) return ResponseEntity.status(401).build();
 
-        // CRITICAL FIX: We must pass the authenticated email here, not the username.
+        // CRITICAL FIX: Pass authentication.getName() which resolves directly to the Email
         roomService.removeMember(roomId, userId, authentication.getName());
         return ResponseEntity.ok().build();
     }

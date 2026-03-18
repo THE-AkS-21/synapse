@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.Authentication;
 import com.skaeht.synapse.dto.response.UserProfileResponse;
+
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -27,7 +28,6 @@ public class RoomController {
 
     /**
      * Helper method to map Room entities to safe Maps.
-     * Prevents Jackson Infinite Recursion (StackOverflowError) when serializing JPA entities.
      */
     private Map<String, Object> mapRoomToResponse(Room room) {
         Map<String, Object> map = new java.util.HashMap<>();
@@ -36,6 +36,15 @@ public class RoomController {
         map.put("type", room.getType().name());
         map.put("creatorId", room.getCreator() != null ? room.getCreator().getId() : null);
         map.put("theme", room.getTheme());
+
+        // CRITICAL FIX: Ensure participants are included safely so the frontend
+        // can dynamically figure out the other user's name in Direct Messages.
+        if (room.getParticipants() != null) {
+            map.put("participants", room.getParticipants().stream()
+                    .map(p -> Map.of("id", p.getId(), "username", p.getUsername()))
+                    .collect(Collectors.toList()));
+        }
+
         return map;
     }
 
@@ -111,12 +120,8 @@ public class RoomController {
 
     @DeleteMapping("/{roomId}")
     public ResponseEntity<Void> deleteRoom(@PathVariable String roomId, Authentication authentication) {
-        // Safely extract the custom UserDetails containing the ID
         UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
-
-        // Pass to service: roomId FIRST, userId SECOND
         roomService.deleteRoom(roomId, userDetails.getId());
-
         return ResponseEntity.noContent().build();
     }
 
@@ -155,5 +160,21 @@ public class RoomController {
                 .map(user -> new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail(), user.getDisplayId()))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(safeParticipants);
+    }
+
+    @PostMapping("/direct")
+    public ResponseEntity<Map<String, Object>> startDirectMessage(@RequestBody Map<String, Long> request, Authentication authentication) {
+        Long user1Id = request.get("user1Id");
+        Long user2Id = request.get("user2Id");
+
+        var userOpt = userService.findByEmail(authentication.getName());
+        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
+
+        if (!userOpt.get().getId().equals(user1Id) && !userOpt.get().getId().equals(user2Id)) {
+            return ResponseEntity.status(403).build();
+        }
+
+        Room dmRoom = roomService.getOrCreateDirectMessageByIds(user1Id, user2Id);
+        return ResponseEntity.ok(mapRoomToResponse(dmRoom));
     }
 }

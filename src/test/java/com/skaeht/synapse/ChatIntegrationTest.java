@@ -122,7 +122,7 @@ class ChatIntegrationTest {
                     }
                 }).get(5, TimeUnit.SECONDS);
 
-        Thread.sleep(500);
+        Thread.sleep(100);
 
         ChatMessage messageToSend = new ChatMessage("general", 1L, username, "Hello, World!", System.currentTimeMillis());
         session.send("/app/chat.sendMessage", messageToSend);

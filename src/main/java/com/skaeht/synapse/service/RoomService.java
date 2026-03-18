@@ -10,14 +10,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.security.access.AccessDeniedException;
 
 @Slf4j
 @Service
@@ -29,11 +28,7 @@ public class RoomService {
     private final MessageRepository messageRepository;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    /**
-     * Generates a unique 12-digit numeric room ID formatted as XXXX-YYYY-ZZZZ.
-     */
     private String generateNumericRoomId() {
-        // Generates a 12-digit numeric string split by hyphens: XXXX-YYYY-ZZZZ
         return String.format("%04d-%04d-%04d",
                 secureRandom.nextInt(10000),
                 secureRandom.nextInt(10000),
@@ -46,24 +41,17 @@ public class RoomService {
                 .orElseThrow(() -> new ResourceNotFoundException("Creator not found"));
 
         Room room = Room.builder()
-                .id(generateNumericRoomId()) // Adjusted for standard Lombok syntax
+                .id(generateNumericRoomId())
                 .name(name)
                 .type(type)
                 .creator(creator)
-                // If you use @Builder.Default on the Set in your entity, you don't need the initialization below,
-                // but it's safest to define it explicitly if not.
                 .build();
 
-        // Safely initialize the collection if it's null before adding the creator
         if (room.getParticipants() == null) {
             room.setParticipants(new HashSet<>());
         }
 
         room.getParticipants().add(creator);
-
-        // Optional: If you maintain bidirectional relationships in JPA,
-        // you might also need: creator.getRooms().add(room);
-
         return roomRepository.save(room);
     }
 
@@ -74,15 +62,14 @@ public class RoomService {
         User target = userRepository.findByDisplayId(targetDisplayId)
                 .orElseThrow(() -> new ResourceNotFoundException("Target user not found"));
 
-        // 1. Check if a DM room already exists between these two exact users
-        // (You will need a custom @Query in RoomRepository if this method doesn't exist)
         Optional<Room> existingDM = roomRepository.findDirectMessageRoom(current.getId(), target.getId());
 
         if (existingDM.isPresent()) {
-            return existingDM.get();
+            Room room = existingDM.get();
+            room.getParticipants().size(); // Initialize lazy collection
+            return room;
         }
 
-        // 2. Create new DM Room
         Room dmRoom = Room.builder()
                 .id(generateNumericRoomId())
                 .name(current.getDisplayId() + "_" + target.getDisplayId())
@@ -99,23 +86,37 @@ public class RoomService {
         return roomRepository.save(dmRoom);
     }
 
+    @Transactional(readOnly = true)
     public Optional<Room> getRoomById(String roomId) {
-        return roomRepository.findById(roomId);
+        Optional<Room> roomOpt = roomRepository.findById(roomId);
+        // CRITICAL FIX: Initialize the participants collection while transaction is open
+        roomOpt.ifPresent(room -> room.getParticipants().size());
+        return roomOpt;
     }
 
+    @Transactional(readOnly = true)
     public Room getRoom(String roomId) {
         return getRoomById(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found: " + roomId));
     }
 
+    @Transactional(readOnly = true)
     public List<Room> getPublicRooms() {
-        return roomRepository.findByType(Room.RoomType.PUBLIC);
+        List<Room> rooms = roomRepository.findByType(Room.RoomType.PUBLIC);
+        // CRITICAL FIX: Initialize lazy collections
+        rooms.forEach(room -> room.getParticipants().size());
+        return rooms;
     }
 
+    @Transactional(readOnly = true)
     public List<Room> getUserRooms(Long userId) {
-        return roomRepository.findByParticipants_Id(userId);
+        List<Room> rooms = roomRepository.findByParticipants_Id(userId);
+        // CRITICAL FIX: Initialize lazy collections
+        rooms.forEach(room -> room.getParticipants().size());
+        return rooms;
     }
 
+    @Transactional(readOnly = true)
     public List<Room> getRoomsForUser(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -154,20 +155,15 @@ public class RoomService {
 
     @Transactional
     public void deleteRoom(String roomId, Long requesterId) {
-        // 1. Find the requester
         User requester = userRepository.findById(requesterId)
                 .orElseThrow(() -> new ResourceNotFoundException("Requester not found"));
-
-        // 2. Find the room using the built-in findById
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        // 3. Authorization Check
         if (!room.getCreator().getId().equals(requester.getId())) {
             throw new AccessDeniedException("You do not have permission to delete this room.");
         }
 
-        // 4. Perform deletion
         roomRepository.delete(room);
     }
 
@@ -188,5 +184,33 @@ public class RoomService {
             throw new SecurityException("Only creator can clear messages");
         }
         messageRepository.deleteByRoomId(roomId);
+    }
+
+    @Transactional
+    public Room getOrCreateDirectMessageByIds(Long user1Id, Long user2Id) {
+        Optional<Room> existingDM = roomRepository.findDirectMessageRoom(user1Id, user2Id);
+        if (existingDM.isPresent()) {
+            Room room = existingDM.get();
+            room.getParticipants().size(); // Initialize lazy collection
+            return room;
+        }
+
+        User user1 = userRepository.findById(user1Id).orElseThrow(() -> new ResourceNotFoundException("User 1 not found"));
+        User user2 = userRepository.findById(user2Id).orElseThrow(() -> new ResourceNotFoundException("User 2 not found"));
+
+        Room dmRoom = Room.builder()
+                .id(generateNumericRoomId())
+                .name(user1.getUsername() + "_" + user2.getUsername())
+                .type(Room.RoomType.DIRECT)
+                .build();
+
+        if (dmRoom.getParticipants() == null) {
+            dmRoom.setParticipants(new HashSet<>());
+        }
+
+        dmRoom.getParticipants().add(user1);
+        dmRoom.getParticipants().add(user2);
+
+        return roomRepository.save(dmRoom);
     }
 }

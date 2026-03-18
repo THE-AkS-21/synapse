@@ -1,57 +1,52 @@
 package com.skaeht.synapse.health;
 
+import com.skaeht.synapse.service.MessageBufferService;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import javax.sql.DataSource;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
-import com.skaeht.synapse.repository.UserRepository;
-import com.skaeht.synapse.repository.MessageRepository;
-import com.skaeht.synapse.repository.RoomRepository;
-import org.redisson.api.RedissonClient;
+import org.springframework.test.web.servlet.MockMvc;
 
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import org.springframework.boot.actuate.health.Health;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest
+@AutoConfigureMockMvc(addFilters = false)
 @ActiveProfiles("test")
-@AutoConfigureMockMvc
-@EnableAutoConfiguration(exclude = { DataSourceAutoConfiguration.class, RedisAutoConfiguration.class })
-@TestPropertySource(properties = {
-        "management.endpoints.web.exposure.include=health",
-        "management.endpoint.health.show-details=always",
-        "management.health.defaults.enabled=false"
-})
-class HealthCheckIntegrationTest {
+public class HealthCheckIntegrationTest {
 
-    @Autowired private MockMvc mockMvc;
+    @Autowired
+    private MockMvc mockMvc;
 
-    @MockitoBean private UserRepository userRepository;
-    @MockitoBean private MessageRepository messageRepository;
-    @MockitoBean private RoomRepository roomRepository;
-    @MockitoBean private RedissonClient redissonClient;
-    @MockitoBean private DataSource dataSource;
-    @MockitoBean private RedisConnectionFactory redisConnectionFactory;
-    @MockitoBean private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
-    @MockitoBean private org.springframework.data.redis.listener.RedisMessageListenerContainer redisMessageListenerContainer;
-    @MockitoBean private com.skaeht.synapse.repository.InvitationRepository invitationRepository;
+    @MockitoBean
+    private RedissonClient redissonClient;
 
-    @MockitoBean private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
-    @MockitoBean private org.springframework.messaging.simp.SimpMessagingTemplate simpMessagingTemplate;
+    @MockitoBean
+    private MessageBufferService messageBufferService;
+
+    // Mock the custom health indicators so they always return UP in this test
+    @MockitoBean
+    private RedisHealthIndicator redisHealthIndicator;
+
+    @MockitoBean
+    private PostgreSQLHealthIndicator postgreSQLHealthIndicator;
+
+    @MockitoBean
+    private WebSocketHealthIndicator webSocketHealthIndicator;
 
     @Test
-    @org.springframework.security.test.context.support.WithMockUser
-    void testHealthEndpoint() throws Exception {
+    public void testHealthEndpoint() throws Exception {
+        // Force the custom indicators to report UP
+        when(redisHealthIndicator.health()).thenReturn(Health.up().build());
+        when(postgreSQLHealthIndicator.health()).thenReturn(Health.up().build());
+        when(webSocketHealthIndicator.health()).thenReturn(Health.up().build());
+
         mockMvc.perform(get("/actuator/health"))
-                .andExpect(jsonPath("$.status").exists());
+                .andExpect(status().isOk());
     }
 }

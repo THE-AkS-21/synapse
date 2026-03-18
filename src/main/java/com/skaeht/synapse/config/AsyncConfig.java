@@ -7,28 +7,22 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
 /**
- * Configuration for asynchronous processing.
+ * Configuration for asynchronous processing and scheduling.
  * Optimized for handling high concurrent load.
  */
 @Configuration
 @EnableAsync
+@EnableScheduling
 public class AsyncConfig implements AsyncConfigurer {
 
     private static final Logger log = LoggerFactory.getLogger(AsyncConfig.class);
 
-    /**
-     * Configure the async executor with optimized settings for high concurrency.
-     * 
-     * Pool sizing strategy:
-     * - Core pool size: Based on available processors
-     * - Max pool size: Higher to handle spikes
-     * - Queue capacity: Large enough to buffer during peak loads
-     */
     @Bean(name = "taskExecutor")
     @Override
     public Executor getAsyncExecutor() {
@@ -36,25 +30,13 @@ public class AsyncConfig implements AsyncConfigurer {
 
         int processors = Runtime.getRuntime().availableProcessors();
 
-        // Core pool size: 2x processors for I/O bound operations
         executor.setCorePoolSize(processors * 2);
-
-        // Max pool size: 4x processors to handle spikes
         executor.setMaxPoolSize(processors * 4);
-
-        // Queue capacity: Buffer for high load scenarios
         executor.setQueueCapacity(1000);
-
-        // Thread naming for easier debugging
         executor.setThreadNamePrefix("async-");
-
-        // Graceful shutdown
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
-
-        // Caller runs policy: If queue is full, execute in caller thread
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
-
         executor.initialize();
 
         log.info("Async executor configured with core pool size: {}, max pool size: {}",
@@ -63,9 +45,6 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
-    /**
-     * Handle uncaught exceptions in async methods.
-     */
     @Override
     public AsyncUncaughtExceptionHandler getAsyncUncaughtExceptionHandler() {
         return (throwable, method, params) -> {

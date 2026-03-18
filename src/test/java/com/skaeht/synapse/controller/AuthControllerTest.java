@@ -2,45 +2,40 @@ package com.skaeht.synapse.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.skaeht.synapse.dto.request.LoginRequest;
-import com.skaeht.synapse.dto.request.RegisterRequest;
 import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.entity.User;
-import com.skaeht.synapse.repository.UserRepository;
+import com.skaeht.synapse.security.JwtAuthFilter;
 import com.skaeht.synapse.security.JwtTokenProvider;
 import com.skaeht.synapse.security.UserDetailsImpl;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import com.skaeht.synapse.service.UserService;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.context.annotation.Import;
-import com.skaeht.synapse.config.SecurityConfig;
-import org.springframework.http.MediaType;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-
 import com.skaeht.synapse.service.PresenceService;
 import com.skaeht.synapse.service.RoomService;
+import com.skaeht.synapse.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.core.Authentication;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
-
 import static org.mockito.ArgumentMatchers.any;
-
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(AuthController.class)
-@Import({ SecurityConfig.class, com.skaeht.synapse.security.JwtAuthFilter.class })
+@WebMvcTest(controllers = AuthController.class)
+@AutoConfigureMockMvc(addFilters = false) // Bypasses security filters for testing
 @ActiveProfiles("test")
 class AuthControllerTest {
 
@@ -52,20 +47,22 @@ class AuthControllerTest {
 
     @MockitoBean
     private AuthenticationManager authenticationManager;
-    @MockitoBean
-    private UserRepository userRepository;
-    @MockitoBean
-    private PasswordEncoder passwordEncoder;
+
     @MockitoBean
     private JwtTokenProvider jwtTokenProvider;
-    @MockitoBean
-    private com.skaeht.synapse.security.UserDetailsServiceImpl userDetailsService;
+
     @MockitoBean
     private UserService userService;
+
     @MockitoBean
     private RoomService roomService;
+
     @MockitoBean
     private PresenceService presenceService;
+
+    // CRITICAL FIX: Mock JwtAuthFilter so SecurityConfig resolves its autowired dependency
+    @MockitoBean
+    private JwtAuthFilter jwtAuthFilter;
 
     @Mock
     private Authentication authentication;
@@ -91,7 +88,6 @@ class AuthControllerTest {
         ResponseEntity<?> response = authController.logoutUser(authentication);
         assertEquals(200, response.getStatusCode().value());
 
-        // Because broadcasting is multithreaded (CompletableFuture), add a short sleep in the test to verify async code
         Thread.sleep(100);
         verify(presenceService, times(1)).userLeftRoom("100", "room-A");
     }
@@ -99,6 +95,7 @@ class AuthControllerTest {
     @Test
     void testLoginUser_Success() throws Exception {
         LoginRequest req = new LoginRequest("test@example.com", "password123");
+
         String testToken = "test.jwt.token";
 
         UserDetailsImpl mockUserDetails = new UserDetailsImpl();

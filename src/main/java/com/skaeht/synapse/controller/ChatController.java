@@ -32,22 +32,27 @@ public class ChatController {
         this.userService = userService;
     }
 
-    // FIX: Match frontend send destination: /app/room/{roomId}
     @MessageMapping("/room/{roomId}")
     public void sendRoomMessage(@DestinationVariable String roomId, @Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
-
-        // Ensure the roomId in the payload matches the destination variable
         message.setRoomId(roomId);
 
         Principal principal = headerAccessor.getUser();
-        if (principal != null && message.getSenderUsername() == null) {
-            // Fallback to principal name if frontend didn't send it, though ideally it should.
-            // Actually, the saveMessage service might handle fetching the user, but let's ensure
-            // we have what we need.
-            // Note: In your current implementation, messageService.saveMessage expects the ChatMessage to be fully formed.
+        if (principal == null || principal.getName() == null) {
+            log.warn("Unauthenticated message attempt to room {}", roomId);
+            return;
         }
 
         try {
+            User sender = userService.findByEmail(principal.getName()).orElseThrow();
+
+            message.setSenderId(sender.getId());
+            message.setSenderUsername(sender.getUsername());
+
+            // FIXED: Ensure timestamp is set to server time before passing to the DB Service
+            if (message.getTimestamp() == 0) {
+                message.setTimestamp(System.currentTimeMillis());
+            }
+
             Message savedMsg = roomMessageService.saveMessage(message);
 
             ChatMessage outMsg = ChatMessage.builder()
@@ -59,7 +64,6 @@ public class ChatController {
                     .timestamp(savedMsg.getTimestamp())
                     .build();
 
-            // FIX: Broadcast to the exact topic the frontend is subscribed to: /topic/chat/{roomId}
             messagingTemplate.convertAndSend("/topic/chat/" + roomId, outMsg);
 
         } catch (Exception e) {
@@ -74,9 +78,7 @@ public class ChatController {
         if (dm.getReceiverUsername() == null || dm.getContent() == null) return;
 
         try {
-            // Find sender by EMAIL (since principal.getName() is usually the email from JWT)
             User sender = userService.findByEmail(principal.getName()).orElseThrow();
-            // Assuming receiverUsername in payload is actually the username.
             User receiver = userService.findByUsername(dm.getReceiverUsername()).orElseThrow();
 
             DirectMessage savedDm = directMessageService.saveDirectMessage(sender.getId(), receiver.getId(), dm.getContent());

@@ -26,9 +26,6 @@ public class RoomController {
     @Autowired
     private UserService userService;
 
-    /**
-     * Helper method to map Room entities to safe Maps.
-     */
     private Map<String, Object> mapRoomToResponse(Room room) {
         Map<String, Object> map = new java.util.HashMap<>();
         map.put("id", room.getId());
@@ -37,8 +34,6 @@ public class RoomController {
         map.put("creatorId", room.getCreator() != null ? room.getCreator().getId() : null);
         map.put("theme", room.getTheme());
 
-        // CRITICAL FIX: Ensure participants are included safely so the frontend
-        // can dynamically figure out the other user's name in Direct Messages.
         if (room.getParticipants() != null) {
             map.put("participants", room.getParticipants().stream()
                     .map(p -> Map.of("id", p.getId(), "username", p.getUsername()))
@@ -114,7 +109,8 @@ public class RoomController {
         var requesterOpt = userService.findByEmail(authentication.getName());
         if (requesterOpt.isEmpty()) return ResponseEntity.status(401).build();
 
-        roomService.removeMember(roomId, userId, requesterOpt.get().getUsername());
+        // CRITICAL FIX: We must pass the authenticated email here, not the username.
+        roomService.removeMember(roomId, userId, authentication.getName());
         return ResponseEntity.ok().build();
     }
 

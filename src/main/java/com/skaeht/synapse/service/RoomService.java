@@ -89,7 +89,6 @@ public class RoomService {
     @Transactional(readOnly = true)
     public Optional<Room> getRoomById(String roomId) {
         Optional<Room> roomOpt = roomRepository.findById(roomId);
-        // CRITICAL FIX: Initialize the participants collection while transaction is open
         roomOpt.ifPresent(room -> room.getParticipants().size());
         return roomOpt;
     }
@@ -103,7 +102,6 @@ public class RoomService {
     @Transactional(readOnly = true)
     public List<Room> getPublicRooms() {
         List<Room> rooms = roomRepository.findByType(Room.RoomType.PUBLIC);
-        // CRITICAL FIX: Initialize lazy collections
         rooms.forEach(room -> room.getParticipants().size());
         return rooms;
     }
@@ -111,7 +109,6 @@ public class RoomService {
     @Transactional(readOnly = true)
     public List<Room> getUserRooms(Long userId) {
         List<Room> rooms = roomRepository.findByParticipants_Id(userId);
-        // CRITICAL FIX: Initialize lazy collections
         rooms.forEach(room -> room.getParticipants().size());
         return rooms;
     }
@@ -146,22 +143,36 @@ public class RoomService {
         User userToRemove = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Target user not found"));
 
-        if (!room.getCreator().getId().equals(requester.getId()) && !requester.getId().equals(userId)) {
-            throw new SecurityException("Not authorized to remove member");
+        if (room.getType() == Room.RoomType.DIRECT) {
+            throw new SecurityException("Cannot remove members from a direct message chat");
+        } else {
+            boolean isCreator = room.getCreator() != null && room.getCreator().getId().equals(requester.getId());
+            boolean isSelf = requester.getId().equals(userId);
+
+            if (!isCreator && !isSelf) {
+                throw new SecurityException("Not authorized to remove member");
+            }
         }
+
         room.getParticipants().remove(userToRemove);
         roomRepository.save(room);
     }
 
     @Transactional
     public void deleteRoom(String roomId, Long requesterId) {
-        User requester = userRepository.findById(requesterId)
-                .orElseThrow(() -> new ResourceNotFoundException("Requester not found"));
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        if (!room.getCreator().getId().equals(requester.getId())) {
-            throw new AccessDeniedException("You do not have permission to delete this room.");
+        if (room.getType() == Room.RoomType.DIRECT) {
+            boolean isParticipant = room.getParticipants().stream()
+                    .anyMatch(p -> p.getId().equals(requesterId));
+            if (!isParticipant) {
+                throw new AccessDeniedException("You do not have permission to delete this DM.");
+            }
+        } else {
+            if (room.getCreator() == null || !room.getCreator().getId().equals(requesterId)) {
+                throw new AccessDeniedException("You do not have permission to delete this room.");
+            }
         }
 
         roomRepository.delete(room);
@@ -170,9 +181,19 @@ public class RoomService {
     @Transactional
     public Room updateTheme(String roomId, String theme, Long requesterId) {
         Room room = getRoom(roomId);
-        if (!room.getCreator().getId().equals(requesterId)) {
-            throw new SecurityException("Only creator can update theme");
+
+        if (room.getType() == Room.RoomType.DIRECT) {
+            boolean isParticipant = room.getParticipants().stream()
+                    .anyMatch(p -> p.getId().equals(requesterId));
+            if (!isParticipant) {
+                throw new SecurityException("Only participants can update DM theme");
+            }
+        } else {
+            if (room.getCreator() == null || !room.getCreator().getId().equals(requesterId)) {
+                throw new SecurityException("Only creator can update theme");
+            }
         }
+
         room.setTheme(theme);
         return roomRepository.save(room);
     }
@@ -180,9 +201,20 @@ public class RoomService {
     @Transactional
     public void clearMessages(String roomId, Long requesterId) {
         Room room = getRoom(roomId);
-        if (!room.getCreator().getId().equals(requesterId)) {
-            throw new SecurityException("Only creator can clear messages");
+
+        // Handle Direct Messages vs Group Rooms safely
+        if (room.getType() == Room.RoomType.DIRECT) {
+            boolean isParticipant = room.getParticipants().stream()
+                    .anyMatch(p -> p.getId().equals(requesterId));
+            if (!isParticipant) {
+                throw new SecurityException("Only participants can clear DM messages");
+            }
+        } else {
+            if (room.getCreator() == null || !room.getCreator().getId().equals(requesterId)) {
+                throw new SecurityException("Only the creator can clear messages");
+            }
         }
+
         messageRepository.deleteByRoomId(roomId);
     }
 

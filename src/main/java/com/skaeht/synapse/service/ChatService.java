@@ -43,6 +43,14 @@ public class ChatService {
         this.messageBufferService = messageBufferService;
     }
 
+    /**
+     * Core message processing pipeline.
+     * Features:
+     * 1. Redis-backed rate limiting (max 5 messages / 2 seconds per user).
+     * 2. Synchronous publishing to Redis Pub/Sub for immediate WebSocket fanout.
+     * 3. Asynchronous persistence via MessageBufferService (if enabled) to reduce database write contention.
+     * 4. Optimization: Uses getReferenceById for direct proxy injection without firing a SELECT query.
+     */
     @Async
     @Transactional
     public CompletableFuture<ChatMessage> sendMessage(String content, Long senderId, String senderUsername, String roomId) {
@@ -75,12 +83,19 @@ public class ChatService {
         return CompletableFuture.completedFuture(chatMessage);
     }
 
+    /**
+     * Overloaded helper for sending messages to a default "general" room.
+     */
     @Async
     @Transactional
     public CompletableFuture<ChatMessage> sendMessage(String content, Long senderId, String senderUsername) {
         return sendMessage(content, senderId, senderUsername, "general");
     }
 
+    /**
+     * Validates message payload to prevent empty submissions or excessively large payloads
+     * that could impact database performance or cause client-side rendering issues.
+     */
     public boolean isValidMessage(String content) {
         return content != null && !content.trim().isEmpty() && content.length() <= MAX_MESSAGE_LENGTH;
     }

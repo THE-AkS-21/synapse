@@ -11,6 +11,11 @@ import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSeriali
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.security.jackson2.CoreJackson2Module;
 
+/**
+ * ARCHITECTURE NOTE: Distributed Cache & Event Bus Configuration
+ * Configures the primary RedisTemplate used across the application for both
+ * Object caching (UserDetails) and Pub/Sub messaging.
+ */
 @Configuration
 public class RedisConfig {
 
@@ -19,9 +24,15 @@ public class RedisConfig {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
 
-        // Setup secure ObjectMapper for caching UserDetails
+        /*
+         * SERIALIZATION NOTE:
+         * To safely cache complex Spring Security objects (like UserDetailsImpl containing
+         * SimpleGrantedAuthority collections), we must register CoreJackson2Module.
+         * DefaultTyping is activated so the JSON payload includes class metadata (@class),
+         * allowing Jackson to reconstruct the exact Java types upon deserialization.
+         */
         ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new CoreJackson2Module()); // Required for SimpleGrantedAuthority
+        objectMapper.registerModule(new CoreJackson2Module());
         objectMapper.activateDefaultTyping(
                 LaissezFaireSubTypeValidator.instance,
                 ObjectMapper.DefaultTyping.NON_FINAL,

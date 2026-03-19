@@ -4,13 +4,14 @@ import com.skaeht.synapse.dto.request.LoginRequest;
 import com.skaeht.synapse.dto.request.RegisterRequest;
 import com.skaeht.synapse.dto.response.AuthResponse;
 import com.skaeht.synapse.dto.response.UserProfileResponse;
-import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.security.JwtTokenProvider;
 import com.skaeht.synapse.security.UserDetailsImpl;
 import com.skaeht.synapse.service.PresenceService;
 import com.skaeht.synapse.service.RoomService;
 import com.skaeht.synapse.service.UserService;
+import com.skaeht.synapse.util.SecurityUtil;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -22,14 +23,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Authentication Controller handling Login/Register and Logout operations.
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/auth")
@@ -43,9 +39,8 @@ public class AuthController {
     private final RoomService roomService;
 
     @PostMapping("/login")
-    public ResponseEntity<?> authenticateUser(@RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
         try {
-            // 1. Authenticate STRICTLY using Email and Password
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginRequest.email(), loginRequest.password())
             );
@@ -53,7 +48,6 @@ public class AuthController {
             SecurityContextHolder.getContext().setAuthentication(authentication);
             String jwt = tokenProvider.generateToken(authentication);
 
-            // Fetch the populated user details for the response payload
             UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
 
             log.info("User {} logged in successfully", userDetails.getEmail());
@@ -71,13 +65,15 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<UserProfileResponse> registerUser(@RequestBody RegisterRequest registerRequest) {
+    public ResponseEntity<UserProfileResponse> registerUser(@Valid @RequestBody RegisterRequest registerRequest) {
         log.info("Registering new user with email: {}", registerRequest.email());
+
         User user = userService.registerUser(
                 registerRequest.username(),
                 registerRequest.email(),
                 registerRequest.password()
         );
+
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail(), user.getDisplayId())
         );
@@ -85,25 +81,30 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<?> logoutUser(Authentication authentication) {
-        if (authentication != null && authentication.getName() != null) {
-            String email = authentication.getName(); // Extracted from JWT Subject
+        try {
+            String email = SecurityUtil.getCurrentUserEmail(authentication);
 
-            Optional<User> userOpt = userService.findByEmail(email);
-            if (userOpt.isPresent()) {
-                User user = userOpt.get();
-
-                // PERFORMANCE FIX: Multithreaded offline broadcast to avoid blocking response
+            userService.findByEmail(email).ifPresent(user -> {
+                /*
+                 * ARCHITECTURE NOTE:
+                 * Using CompletableFuture here prevents the HTTP response from blocking while Redis updates.
+                 * Future Iteration: Move this logic entirely into an @Async method inside PresenceService
+                 * to keep the Controller strictly focused on HTTP routing.
+                 */
                 CompletableFuture.runAsync(() -> {
-                    List<Room> rooms = roomService.getUserRooms(user.getId());
-                    for (Room room : rooms) {
-                        presenceService.userLeftRoom(user.getId().toString(), room.getId());
-                    }
+                    roomService.getUserRooms(user.getId()).forEach(room ->
+                            presenceService.userLeftRoom(user.getId().toString(), room.getId())
+                    );
                     log.info("Offline status broadcasted async for user email: {}", email);
                 });
-            }
+            });
+        } catch (IllegalStateException e) {
+            log.debug("Logout called with empty security context");
+        } finally {
+            // Always clear context regardless of presence broadcast success
+            SecurityContextHolder.clearContext();
         }
 
-        SecurityContextHolder.clearContext();
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 }

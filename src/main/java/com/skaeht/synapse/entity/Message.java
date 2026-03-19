@@ -3,6 +3,11 @@ package com.skaeht.synapse.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+/**
+ * ARCHITECTURE NOTE: High-Volume Message Store
+ * This is the heaviest table in the application. Indexes are heavily optimized for
+ * time-series retrieval (fetching history for a specific room).
+ */
 @Entity
 @Table(name = "messages", indexes = {
         @Index(name = "idx_room_timestamp", columnList = "room_id, timestamp"),
@@ -20,26 +25,30 @@ public class Message {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 36, unique = true)
-    private String messageId; // UUID for deduplication
+    /**
+     * Client-generated UUID (Idempotency Key).
+     * Prevents duplicate messages if a client drops network and retries a send request
+     * that the server actually processed.
+     */
+    @Column(nullable = false, length = 36, unique = true, updatable = false)
+    private String messageId;
 
-    // NORMALIZATION: Database now knows this strictly belongs to a Room
+    @ToString.Exclude
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "room_id", nullable = false)
+    @JoinColumn(name = "room_id", nullable = false, updatable = false)
     private Room room;
 
-    // NORMALIZATION: Database now enforces this must be a valid User
+    @ToString.Exclude
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "sender_id", nullable = false)
+    @JoinColumn(name = "sender_id", nullable = false, updatable = false)
     private User sender;
 
     @Column(nullable = false, length = 5000)
     private String content;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private long timestamp;
 
-    // ISOLATION: Flag for "Deleted for Everyone"
     @Column(nullable = false)
     @Builder.Default
     private boolean isDeleted = false;

@@ -1,13 +1,20 @@
 package com.skaeht.synapse.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * ARCHITECTURE NOTE: Room Aggregation Root
+ * Acts as the aggregate root for all group interactions.
+ * Note that the 'id' is a manually generated String (e.g., '1234-5678-9012') rather than
+ * an auto-incrementing Long to prevent external attackers from scraping room IDs
+ * sequentially.
+ */
 @Entity
 @Table(name = "rooms", indexes = {
         @Index(name = "idx_room_type", columnList = "type"),
@@ -31,12 +38,12 @@ public class Room {
     @Column(nullable = false, length = 20)
     private RoomType type;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    // NORMALIZATION: Strict Foreign Key to users table
+    @ToString.Exclude
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "creator_id")
+    @JoinColumn(name = "creator_id", updatable = false)
     private User creator;
 
     @Column(name = "theme", length = 50)
@@ -44,6 +51,7 @@ public class Room {
     private String theme = "default";
 
     @JsonIgnore
+    @ToString.Exclude
     @ManyToMany
     @JoinTable(
             name = "room_participants",
@@ -61,8 +69,8 @@ public class Room {
     }
 
     public enum RoomType {
-        PUBLIC,  // Open to all users
-        PRIVATE, // Invite-only
-        DIRECT   // Required for 1-on-1 DM sync with the frontend
+        PUBLIC,
+        PRIVATE,
+        DIRECT
     }
 }

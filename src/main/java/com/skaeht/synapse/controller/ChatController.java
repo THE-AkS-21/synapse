@@ -7,17 +7,24 @@ import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.service.DirectMessageService;
 import com.skaeht.synapse.service.MessageService;
 import com.skaeht.synapse.service.UserService;
+import com.skaeht.synapse.util.MessageMapperUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+
 import java.security.Principal;
 
+/**
+ * WebSocket Controller handling real-time message routing.
+ */
 @Slf4j
 @Controller
+@RequiredArgsConstructor
 public class ChatController {
 
     private final SimpMessagingTemplate messagingTemplate;
@@ -25,49 +32,36 @@ public class ChatController {
     private final DirectMessageService directMessageService;
     private final UserService userService;
 
-    public ChatController(SimpMessagingTemplate messagingTemplate, MessageService roomMessageService, DirectMessageService directMessageService, UserService userService) {
-        this.messagingTemplate = messagingTemplate;
-        this.roomMessageService = roomMessageService;
-        this.directMessageService = directMessageService;
-        this.userService = userService;
-    }
-
     @MessageMapping("/room/{roomId}")
-    public void sendRoomMessage(@DestinationVariable String roomId, @Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
-        message.setRoomId(roomId);
+    public void sendRoomMessage(@DestinationVariable String roomId,
+                                @Payload ChatMessage message,
+                                SimpMessageHeaderAccessor headerAccessor) {
 
         Principal principal = headerAccessor.getUser();
         if (principal == null || principal.getName() == null) {
-            log.warn("Unauthenticated message attempt to room {}", roomId);
+            log.warn("SECURITY WARNING: Unauthenticated WebSocket message attempt to room {}", roomId);
             return;
         }
 
         try {
             User sender = userService.findByEmail(principal.getName()).orElseThrow();
 
+            message.setRoomId(roomId);
             message.setSenderId(sender.getId());
             message.setSenderUsername(sender.getUsername());
 
-            // FIXED: Ensure timestamp is set to server time before passing to the DB Service
+            // Ensure server-authoritative timestamps
             if (message.getTimestamp() == 0) {
                 message.setTimestamp(System.currentTimeMillis());
             }
 
             Message savedMsg = roomMessageService.saveMessage(message);
-
-            ChatMessage outMsg = ChatMessage.builder()
-                    .id(savedMsg.getMessageId())
-                    .roomId(savedMsg.getRoom().getId())
-                    .senderId(savedMsg.getSender().getId())
-                    .senderUsername(savedMsg.getSender().getUsername())
-                    .content(savedMsg.getContent())
-                    .timestamp(savedMsg.getTimestamp())
-                    .build();
+            ChatMessage outMsg = MessageMapperUtil.toRoomMessageDto(savedMsg);
 
             messagingTemplate.convertAndSend("/topic/chat/" + roomId, outMsg);
 
         } catch (Exception e) {
-            log.error("Failed to save and broadcast message in room {}", roomId, e);
+            log.error("Failed to save and broadcast message in room {}. Sender: {}", roomId, principal.getName(), e);
         }
     }
 
@@ -81,23 +75,17 @@ public class ChatController {
             User sender = userService.findByEmail(principal.getName()).orElseThrow();
             User receiver = userService.findByUsername(dm.getReceiverUsername()).orElseThrow();
 
-            DirectMessage savedDm = directMessageService.saveDirectMessage(sender.getId(), receiver.getId(), dm.getContent());
+            DirectMessage savedDm = directMessageService.saveDirectMessage(
+                    sender.getId(), receiver.getId(), dm.getContent());
 
-            ChatMessage outDm = ChatMessage.builder()
-                    .id(String.valueOf(savedDm.getId()))
-                    .roomId("dm")
-                    .senderId(sender.getId())
-                    .senderUsername(sender.getUsername())
-                    .receiverUsername(receiver.getUsername())
-                    .content(savedDm.getContent())
-                    .timestamp(savedDm.getTimestamp().toEpochMilli())
-                    .build();
+            ChatMessage outDm = MessageMapperUtil.toDirectMessageDto(savedDm, sender, receiver);
 
+            // Broadcast to both participants' private queues
             messagingTemplate.convertAndSendToUser(dm.getReceiverUsername(), "/queue/messages", outDm);
             messagingTemplate.convertAndSendToUser(sender.getUsername(), "/queue/messages", outDm);
 
         } catch (Exception e) {
-            log.error("Error processing DM", e);
+            log.error("Error processing DM from {} to {}", principal.getName(), dm.getReceiverUsername(), e);
         }
     }
 }

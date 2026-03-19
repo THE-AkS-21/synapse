@@ -10,43 +10,39 @@ import org.springframework.context.annotation.Configuration;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Configuration for caching with Caffeine.
- * Improves performance by caching frequently accessed data.
+ * ARCHITECTURE NOTE: Local L1 Cache (Caffeine)
+ * While Redis serves as our distributed L2 cache, Caffeine acts as an ultra-fast,
+ * in-memory L1 cache for objects that are heavily read but rarely mutated.
+ * This significantly reduces network round-trips to Redis or PostgreSQL for hot data.
  */
 @Configuration
 @EnableCaching
 public class CacheConfig {
 
-    /**
-     * Configure cache manager with specific cache configurations for different data
-     * types.
-     */
     @Bean
     public CacheManager cacheManager() {
         CaffeineCacheManager cacheManager = new CaffeineCacheManager();
 
-        // User cache: 1000 users, expire after 1 hour of inactivity
+        // High-read, low-write profile: User lookups during JWT validation
         cacheManager.registerCustomCache("users",
                 Caffeine.newBuilder()
                         .expireAfterWrite(1, TimeUnit.HOURS)
                         .maximumSize(1000)
-                        .recordStats()
+                        .recordStats() // Exposes hit/miss metrics to Micrometer/Actuator
                         .build());
 
-        // Message cache: 5000 recent messages, expire after 10 minutes
+        // Volatile profile: Chat history buffers
         cacheManager.registerCustomCache("messages",
                 Caffeine.newBuilder()
                         .expireAfterWrite(10, TimeUnit.MINUTES)
                         .maximumSize(5000)
-                        .recordStats()
                         .build());
 
-        // Room cache: 500 rooms, expire after 30 minutes
+        // Moderate-read profile: Room metadata and participant lists
         cacheManager.registerCustomCache("rooms",
                 Caffeine.newBuilder()
                         .expireAfterWrite(30, TimeUnit.MINUTES)
                         .maximumSize(500)
-                        .recordStats()
                         .build());
 
         return cacheManager;

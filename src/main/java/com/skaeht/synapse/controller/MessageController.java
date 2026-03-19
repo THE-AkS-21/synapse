@@ -5,7 +5,7 @@ import com.skaeht.synapse.entity.Message;
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.MessageRepository;
 import com.skaeht.synapse.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,18 +15,20 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/messages")
+@RequiredArgsConstructor
 public class MessageController {
 
-    @Autowired
-    private MessageRepository messageRepository;
-
-    @Autowired
-    private UserRepository userRepository;
+    private final MessageRepository messageRepository;
+    private final UserRepository userRepository;
 
     @GetMapping("/room/{roomId}")
     public ResponseEntity<List<ChatMessage>> getRoomHistory(@PathVariable String roomId) {
         List<Message> messages = messageRepository.findByRoomIdOrderByTimestampDesc(roomId);
 
+        /*
+         * Fetch all distinct senders in a single query to prevent N+1 database hits
+         * when mapping hundreds of historical messages.
+         */
         List<Long> senderIds = messages.stream().map(msg -> msg.getSender().getId()).distinct().toList();
         Map<Long, String> userIdToUsername = userRepository.findAllById(senderIds).stream()
                 .collect(Collectors.toMap(User::getId, User::getUsername));
@@ -39,7 +41,7 @@ public class MessageController {
                 .content(msg.getContent())
                 .timestamp(msg.getTimestamp())
                 .build()
-        ).collect(Collectors.toList());
+        ).toList();
 
         return ResponseEntity.ok(chatMessages);
     }

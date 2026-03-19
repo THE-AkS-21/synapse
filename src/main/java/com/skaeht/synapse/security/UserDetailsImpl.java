@@ -16,8 +16,11 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Custom implementation of Spring Security's UserDetails.
- * REFACTORED: Now strictly uses Email as the primary authentication identifier.
+ * ARCHITECTURE NOTE: Security Principal Representation
+ * This class acts as the bridge between our domain `User` entity and Spring Security's
+ * internal authentication mechanisms. It is purposefully decoupled from the JPA entity
+ * to allow safe serialization into Redis without triggering lazy-loading exceptions or
+ * recursive JSON loops.
  */
 @Getter
 @Setter
@@ -25,17 +28,24 @@ import java.util.List;
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class UserDetailsImpl implements UserDetails {
+
     private Long id;
-    private String actualUsername; // Holds the display username
-    private String email;          // Used for authentication
+    private String actualUsername;
+    private String email;
     private String password;
 
-    // FORCE Jackson to use a standard ArrayList and SimpleGrantedAuthority
+    /*
+     * SERIALIZATION HACK:
+     * Spring Security's default authority collections are unmodifiable, which causes
+     * Jackson deserialization to crash when fetching this object back out of Redis.
+     * By forcing it into a standard ArrayList, we ensure cache compatibility.
+     */
     @JsonDeserialize(as = ArrayList.class, contentAs = SimpleGrantedAuthority.class)
     private Collection<? extends GrantedAuthority> authorities;
 
     public static UserDetailsImpl build(User user) {
         List<GrantedAuthority> authorities = new ArrayList<>();
+        // Future RBAC Expansion: Load actual roles from the DB here instead of hardcoding
         authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
 
         return new UserDetailsImpl(
@@ -47,8 +57,8 @@ public class UserDetailsImpl implements UserDetails {
     }
 
     /**
-     * In Spring Security, this is the primary identifier.
-     * We map it to return the EMAIL to enforce email-based login.
+     * Spring Security uses "Username" as a generic term for the primary identity key.
+     * Since Synapse mandates email-based logins, we route this to return the email.
      */
     @Override
     public String getUsername() {

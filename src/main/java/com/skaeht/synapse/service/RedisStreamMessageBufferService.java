@@ -13,6 +13,7 @@ import org.redisson.api.RedissonClient;
 import org.redisson.api.StreamMessageId;
 import org.redisson.api.stream.StreamAddArgs;
 import org.redisson.api.stream.StreamReadGroupArgs;
+import org.redisson.api.stream.StreamCreateGroupArgs;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
@@ -24,8 +25,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
-import org.redisson.api.stream.StreamCreateGroupArgs;
 
+/**
+ * ARCHITECTURE NOTE: Redisson Stream Buffer
+ * Replaces the purely in-memory MessageBufferService with a distributed Redis Stream.
+ * This ensures that if the server crashes before the "Batch Flush" occurs, the pending
+ * messages are safely stored in Redis and will be picked up by another node in the consumer group.
+ */
 @Slf4j
 @Service
 @Primary
@@ -59,37 +65,36 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
         this.messageRepository = messageRepository;
         this.roomRepository = roomRepository;
         this.userRepository = userRepository;
-
         this.streamKey = streamKey;
         this.consumerGroup = consumerGroup;
         this.batchSize = batchSize;
 
-        String hostname = "unknown";
-        try {
-            hostname = InetAddress.getLocalHost().getHostName();
-        } catch (UnknownHostException e) {
-            log.warn("Could not determine hostname for consumer ID");
-        }
-        this.consumerId = "consumer-" + hostname + "-" + System.currentTimeMillis();
+        this.consumerId = generateConsumerId();
 
         this.consumerExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "RedisStreamConsumer");
+            Thread t = new Thread(r, "Redisson-Stream-Consumer");
             t.setDaemon(true);
             return t;
         });
     }
 
+    private String generateConsumerId() {
+        try {
+            return "consumer-" + InetAddress.getLocalHost().getHostName() + "-" + System.currentTimeMillis();
+        } catch (UnknownHostException e) {
+            return "consumer-unknown-" + System.currentTimeMillis();
+        }
+    }
+
     @PostConstruct
     public void init() {
-        log.info("RedisStreamMessageBufferService initializing with stream key: {}", streamKey);
         RStream<String, String> stream = redissonClient.getStream(streamKey);
         try {
-            // UPDATED: Redisson 3.27+ API syntax for creating a consumer group
             stream.createGroup(StreamCreateGroupArgs.name(consumerGroup).id(StreamMessageId.ALL));
         } catch (Exception e) {
-            log.info("Consumer group {} already exists or error creating: {}", consumerGroup, e.getMessage());
+            log.debug("Consumer group {} initialization check: {}", consumerGroup, e.getMessage());
         }
-        log.info("RedisStreamMessageBufferService initialized with consumerId: {}", consumerId);
+
         consumerExecutor.submit(this::consumeLoop);
     }
 
@@ -106,7 +111,7 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
 
             stream.add(StreamAddArgs.entries(data));
         } catch (Exception e) {
-            log.error("Failed to add message to Redis Stream, falling back to super.bufferMessage", e);
+            log.error("Stream write failed. Falling back to in-memory buffer constraints.", e);
             super.bufferMessage(message);
         }
     }
@@ -127,7 +132,7 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
                 }
             } catch (Exception e) {
                 if (isRunning) {
-                    log.error("Error reading from Redis Stream", e);
+                    log.error("Stream Read Group failure. Retrying...", e);
                     try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 }
             }
@@ -141,10 +146,10 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
 
         try {
             messageRepository.saveAll(entities);
-            StreamMessageId[] ids = streamData.keySet().toArray(new StreamMessageId[0]);
-            stream.ack(consumerGroup, ids);
+            // Redisson requires explicit ACK for StreamReadGroupArgs
+            stream.ack(consumerGroup, streamData.keySet().toArray(new StreamMessageId[0]));
         } catch (Exception e) {
-            log.error("Failed to save batch to DB. Messages will remain pending.", e);
+            log.error("Batch persistence failed. Stream ACK deferred for DLQ/Retry.", e);
         }
     }
 
@@ -162,11 +167,10 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
     @PreDestroy
     @Override
     public void shutdown() {
-        log.info("Shutting down RedisStreamMessageBufferService, processing remaining messages...");
         isRunning = false;
         consumerExecutor.shutdown();
         try {
-            if (!consumerExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+            if (!consumerExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
                 consumerExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {

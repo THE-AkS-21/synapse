@@ -11,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.HashSet;
 import java.util.List;
@@ -20,12 +21,23 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for RoomService.
+ * * SECURITY REFERENCE:
+ * This suite acts as a critical security barrier, ensuring that destructive actions
+ * (deleting rooms, kicking users, clearing message history) strictly respect the
+ * Creator vs. Participant permission boundaries.
+ */
 @ExtendWith(MockitoExtension.class)
 class RoomServiceTest {
 
     @Mock private RoomRepository roomRepository;
     @Mock private UserRepository userRepository;
     @Mock private MessageRepository messageRepository;
+
+    // Core eventing dependencies required by the modern RoomService architecture
+    @Mock private RedisPublisher redisPublisher;
+    @Mock private SimpMessagingTemplate messagingTemplate;
 
     @InjectMocks private RoomService roomService;
 
@@ -34,7 +46,6 @@ class RoomServiceTest {
 
     @BeforeEach
     void setUp() {
-        // Ensure email is set so our removeMember test passes the authorization check
         creator = User.builder()
                 .id(1L)
                 .username("creator")
@@ -56,8 +67,12 @@ class RoomServiceTest {
         when(roomRepository.save(any(Room.class))).thenReturn(publicRoom);
 
         Room room = roomService.createRoom("General", Room.RoomType.PUBLIC, 1L);
+
         assertNotNull(room);
         assertEquals("General", room.getName());
+
+        // Verify that global clients are notified of the new room for dynamic UI updates
+        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/global-events"), anyMap());
     }
 
     @Test
@@ -74,41 +89,42 @@ class RoomServiceTest {
         when(userRepository.findById(2L)).thenReturn(Optional.of(newUser));
 
         roomService.addParticipant("room1", 2L);
+
         verify(roomRepository, times(1)).save(publicRoom);
         assertTrue(publicRoom.getParticipants().contains(newUser));
+
+        // Ensure system messages are generated so existing users see "User Joined" in chat
+        verify(redisPublisher, times(1)).publish(any());
     }
 
     @Test
     void removeMember_Success() {
-        // Arrange
         User memberToRemove = User.builder().id(2L).username("member").build();
         publicRoom.getParticipants().add(creator);
         publicRoom.getParticipants().add(memberToRemove);
 
         when(roomRepository.findById("room1")).thenReturn(Optional.of(publicRoom));
-        // Note: RoomService.removeMember uses findByEmail for the requester
         when(userRepository.findByEmail("creator@test.com")).thenReturn(Optional.of(creator));
-        when(userRepository.findById(2L)).thenReturn(Optional.of(memberToRemove));
 
-        // Act - Call the correct method signature: removeMember(roomId, userId, requesterEmail)
+        // The creator kicks the member
         roomService.removeMember("room1", 2L, "creator@test.com");
 
-        // Assert
         assertFalse(publicRoom.getParticipants().contains(memberToRemove));
         verify(roomRepository, times(1)).save(publicRoom);
+        verify(redisPublisher, times(1)).publish(any()); // Verifies the kick system message
     }
 
     @Test
     void deleteRoom_Success() {
-        // Arrange
         when(roomRepository.findById("room1")).thenReturn(Optional.of(publicRoom));
-        when(userRepository.findById(1L)).thenReturn(Optional.of(creator));
 
-        // Act
+        // Act: Creator requests deletion
         roomService.deleteRoom("room1", 1L);
 
-        // Assert
+        // Assert: Event fires to disconnect active users before DB destruction
+        verify(redisPublisher, times(1)).publish(any());
         verify(roomRepository, times(1)).delete(publicRoom);
+        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/global-events"), anyMap());
     }
 
     @Test

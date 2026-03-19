@@ -21,12 +21,18 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for MessageService.
+ * Validates the core CRUD operations for messages, particularly focusing on
+ * the authorization logic surrounding soft deletions.
+ */
 @ExtendWith(MockitoExtension.class)
 class MessageServiceTest {
 
     @Mock private MessageRepository messageRepository;
     @Mock private UserRepository userRepository;
     @Mock private RoomRepository roomRepository;
+    @Mock private RedisPublisher redisPublisher;
 
     @InjectMocks private MessageService messageService;
 
@@ -67,9 +73,12 @@ class MessageServiceTest {
         when(messageRepository.findById(10L)).thenReturn(Optional.of(testMessage));
         when(messageRepository.save(any(Message.class))).thenReturn(testMessage);
 
+        // testUser (1L) is both the sender and the room creator
         Message deleted = messageService.softDeleteMessage(10L, 1L);
         assertTrue(deleted.isDeleted());
         assertEquals("", deleted.getContent());
+        // Verify the system message was published for active clients
+        verify(redisPublisher, times(1)).publish(any(ChatMessage.class));
     }
 
     @Test

@@ -18,6 +18,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for UserService.
+ * * BEHAVIORAL REFERENCE:
+ * Validates the core identity management flows. Crucially, ensures that any state
+ * mutation (like password changes) correctly triggers a cache eviction across the
+ * system to prevent stale JWT sessions or profile data.
+ */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
@@ -59,9 +66,20 @@ class UserServiceTest {
     }
 
     @Test
+    void testRegisterUser_DuplicateEmail_ShouldThrow() {
+        when(userRepository.existsByUsername(anyString())).thenReturn(false);
+        when(userRepository.existsByEmail(anyString())).thenReturn(true);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> userService.registerUser("newuser", "existing@example.com", "pass"));
+    }
+
+    @Test
     void testFindByEmail() {
         when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(testUser));
+
         Optional<User> result = userService.findByEmail("test@example.com");
+
         assertTrue(result.isPresent());
         assertEquals("test@example.com", result.get().getEmail());
     }
@@ -76,6 +94,8 @@ class UserServiceTest {
 
         assertTrue(result);
         verify(passwordEncoder, times(1)).encode("newPassword");
+
+        // Security Verification: Ensure existing cached sessions are invalidated on password change
         verify(userDetailsService, times(1)).evictUserCache("test@example.com");
     }
 }

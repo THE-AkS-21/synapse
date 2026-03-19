@@ -23,6 +23,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for ChatService.
+ * Focuses on verifying the rate-limiting logic and the correct delegation
+ * of message publishing and buffering tasks.
+ */
 @ExtendWith(MockitoExtension.class)
 class ChatServiceTest {
 
@@ -49,6 +54,7 @@ class ChatServiceTest {
         String senderUsername = "user1";
         String roomId = "room1";
 
+        // Simulate user being under the rate limit threshold
         when(valueOperations.increment(anyString())).thenReturn(1L);
 
         CompletableFuture<ChatMessage> future = chatService.sendMessage(content, senderId, senderUsername, roomId);
@@ -66,6 +72,7 @@ class ChatServiceTest {
 
     @Test
     void sendMessage_RateLimited() {
+        // Simulate user exceeding the rate limit threshold (5 msgs / 2 seconds)
         when(valueOperations.increment(anyString())).thenReturn(6L);
         assertThrows(IllegalStateException.class, () -> {
             chatService.sendMessage("spam", 1L, "user1", "room1");

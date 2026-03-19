@@ -2,6 +2,7 @@ package com.skaeht.synapse.security;
 
 import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -13,8 +14,11 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 
 /**
- * Service for loading user details during authentication.
- * REFACTORED: Exclusively utilizes email for database querying and Redis caching.
+ * ARCHITECTURE NOTE: Read-Through Cached Identity Provider
+ * Because the JwtAuthFilter calls `loadUserByUsername` on *every single request*,
+ * hitting the PostgreSQL database here would create a massive bottleneck.
+ * This service implements a strict Read-Through cache pattern using Redis to keep
+ * authentication latency sub-millisecond.
  */
 @Slf4j
 @Service
@@ -23,7 +27,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
     private final UserRepository userRepository;
     private final RedisTemplate<String, Object> objectRedisTemplate;
 
-    // Cache strictly keys off the email now
     private static final String REDIS_KEY_PREFIX = "user:session:";
 
     public UserDetailsServiceImpl(
@@ -33,9 +36,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         this.objectRedisTemplate = objectRedisTemplate;
     }
 
-    /**
-     * Note: Overrides standard interface method, but the parameter 'email' is expected here.
-     */
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         if (email == null || email.trim().isEmpty()) {
@@ -44,45 +44,44 @@ public class UserDetailsServiceImpl implements UserDetailsService {
 
         String cacheKey = REDIS_KEY_PREFIX + email;
 
-        // 1. Check Redis Cache
+        // Level 1: Check Redis Fast Path
         try {
             Object cachedData = objectRedisTemplate.opsForValue().get(cacheKey);
             if (cachedData instanceof UserDetails) {
-                log.debug("User cache HIT for email: {}", email);
                 return (UserDetails) cachedData;
             }
         } catch (Exception e) {
-            log.warn("Redis cache error during user lookup for {}. Falling back to DB. Error: {}", email, e.getMessage());
+            log.warn("Redis cache unavailable. Falling back to DB lookup for user: {}", email);
         }
 
-        // 2. DB Fallback (Strictly via Email)
-        log.debug("User cache MISS for email: {}. Querying DB.", email);
+        // Level 2: DB Lookup & Cache Hydration
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User Not Found with email: " + email));
 
         UserDetailsImpl userDetails = UserDetailsImpl.build(user);
 
-        // 3. Populate Cache
         try {
+            // Cache TTL prevents stale authority/role data from lingering indefinitely
             objectRedisTemplate.opsForValue().set(cacheKey, userDetails, Duration.ofHours(24));
         } catch (Exception e) {
-            log.warn("Failed to update Redis cache for user {}. Error: {}", email, e.getMessage());
+            log.warn("Failed to hydrate Redis cache for user {}.", email);
         }
 
         return userDetails;
     }
 
     /**
-     * Evict the specific email session from Redis.
+     * Triggered by UserService during mutative operations (e.g., password change, username update).
+     * Ensures the JWT filter immediately picks up the new state on the next request.
      */
     public void evictUserCache(String email) {
         try {
             if (email != null) {
                 objectRedisTemplate.delete(REDIS_KEY_PREFIX + email);
-                log.info("Evicted cache for user email: {}", email);
+                log.debug("Invalidated security cache for user: {}", email);
             }
         } catch (Exception e) {
-            log.error("Failed to evict cache for user email: {}", email, e);
+            log.error("Failed to invalidate security cache for user: {}", email, e);
         }
     }
 }

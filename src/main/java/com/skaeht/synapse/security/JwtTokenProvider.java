@@ -17,8 +17,12 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Handles generation and validation of JWTs.
- * REFACTORED: The JWT Subject is strictly the user's Email.
+ * ARCHITECTURE NOTE: Cryptographic Token Provider
+ * Currently utilizes HS256 (Symmetric Encryption), meaning the same secret key is used to
+ * both sign and verify tokens.
+ * FUTURE SCALING: If Synapse is split into multiple microservices, this should be upgraded
+ * to RS256 (Asymmetric Encryption) so internal microservices can verify tokens using a Public Key
+ * without needing access to the Private Key.
  */
 @Component
 public class JwtTokenProvider {
@@ -33,6 +37,7 @@ public class JwtTokenProvider {
 
     @PostConstruct
     public void init() {
+        // Ensures the secret is cryptographically strong enough for HMAC-SHA algorithms
         this.key = Keys.hmacShaKeyFor(jwtSecret.getBytes());
     }
 
@@ -40,7 +45,6 @@ public class JwtTokenProvider {
         if (authentication == null || authentication.getPrincipal() == null) {
             throw new IllegalArgumentException("Authentication cannot be null");
         }
-        // Since UserDetails.getUsername() is mapped to email, we use it directly
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         return buildToken(new HashMap<>(), userDetails.getUsername());
     }
@@ -75,22 +79,16 @@ public class JwtTokenProvider {
         return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
     }
 
-    public boolean validateToken(String token, UserDetails userDetails) {
-        final String tokenEmail = getEmailFromToken(token);
-        return (tokenEmail.equals(userDetails.getUsername()) && !isTokenExpired(token));
-    }
-
+    /**
+     * Validates both the cryptographic signature and the expiration time.
+     * Prevents replay attacks from expired tokens.
+     */
     public boolean validateToken(String token) {
         try {
             Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-            return !isTokenExpired(token);
+            return true;
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private boolean isTokenExpired(String token) {
-        final Date expiration = getClaimFromToken(token, Claims::getExpiration);
-        return expiration.before(new Date());
     }
 }

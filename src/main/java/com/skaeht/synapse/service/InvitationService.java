@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 /**
  * Service for managing room and DM invitations.
@@ -28,6 +31,9 @@ public class InvitationService {
 
     @Autowired
     private RoomRepository roomRepository;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     /**
      * Unified method called by the controller to route to the correct invitation type.
@@ -53,72 +59,6 @@ public class InvitationService {
         }
     }
 
-//    /**
-//     * Send a room invitation to a user identified by their display ID.
-//     * Only the room creator can invite users. Only PRIVATE rooms require invitations.
-//     */
-//    @Transactional
-//    public Invitation sendRoomInvitation(String roomId, String fromUsername, String toDisplayId) {
-//        Room room = roomRepository.findById(roomId)
-//                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-//
-//        // Get the inviting user to compare IDs
-//        User fromUser = userRepository.findByUsername(fromUsername)
-//                .orElseThrow(() -> new IllegalArgumentException("User not found: " + fromUsername));
-//
-//        // Use creatorId for permission check
-//        if (room.getCreator().getId() != null && !room.getCreator().getId().equals(fromUser.getId())) {
-//            throw new IllegalStateException("Only the room creator can invite members");
-//        }
-//
-//        User targetUser = userRepository.findByDisplayId(toDisplayId)
-//                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-//
-//        if (targetUser.getUsername().equals(fromUsername)) {
-//            throw new IllegalArgumentException("Cannot invite yourself");
-//        }
-//
-//        // Check for duplicate pending invite
-//        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
-//                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
-//            throw new IllegalStateException("Invitation already sent to this user");
-//        }
-//
-//        Invitation invitation = Invitation.builder()
-//                .roomId(roomId)
-//                .roomName(room.getName())
-//                .fromUsername(fromUsername)
-//                .toUsername(targetUser.getUsername())
-//                .type(Invitation.InvitationType.ROOM)
-//                .build();
-//
-//        Invitation saved = invitationRepository.save(invitation);
-//        log.info("Room invitation sent from {} to {} for room {}", fromUsername, targetUser.getUsername(), roomId);
-//        return saved;
-//    }
-
-//    /**
-//     * Send a DM invitation to a user identified by their display ID.
-//     */
-//    @Transactional
-//    public Invitation sendDMInvitation(String fromUsername, String toDisplayId) {
-//        User targetUser = userRepository.findByDisplayId(toDisplayId)
-//                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-//
-//        if (targetUser.getUsername().equals(fromUsername)) {
-//            throw new IllegalArgumentException("Cannot invite yourself");
-//        }
-//
-//        Invitation invitation = Invitation.builder()
-//                .fromUsername(fromUsername)
-//                .toUsername(targetUser.getUsername())
-//                .type(Invitation.InvitationType.DM)
-//                .build();
-//
-//        Invitation saved = invitationRepository.save(invitation);
-//        log.info("DM invitation sent from {} to {}", fromUsername, targetUser.getUsername());
-//        return saved;
-//    }
 
     /**
      * Get all pending invitations for a user.
@@ -215,6 +155,10 @@ public class InvitationService {
                 .build();
 
         Invitation saved = invitationRepository.save(invitation);
+
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "INVITATION_RECEIVED", "targetId", targetUser.getId(), "fromUsername", fromUser.getUsername()));
+
         log.info("Room invitation sent from {} to {} for room {}", fromUser.getUsername(), targetUser.getUsername(), roomId);
         return saved;
     }
@@ -241,6 +185,8 @@ public class InvitationService {
                 .build();
 
         Invitation saved = invitationRepository.save(invitation);
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "INVITATION_RECEIVED", "targetId", targetUser.getId(), "fromUsername", fromUser.getUsername()));
         log.info("DM invitation sent from {} to {}", fromUser.getUsername(), targetUser.getUsername());
         return saved;
     }

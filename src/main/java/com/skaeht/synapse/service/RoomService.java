@@ -9,6 +9,7 @@ import com.skaeht.synapse.repository.RoomRepository;
 import com.skaeht.synapse.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.access.AccessDeniedException;
@@ -17,6 +18,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -28,6 +30,7 @@ public class RoomService {
     private final UserRepository userRepository;
     private final MessageRepository messageRepository;
     private final RedisPublisher redisPublisher;
+    private final SimpMessagingTemplate messagingTemplate; // INJECTED for global WS broadcasts
     private final SecureRandom secureRandom = new SecureRandom();
 
     private String generateNumericRoomId() {
@@ -54,7 +57,16 @@ public class RoomService {
         }
 
         room.getParticipants().add(creator);
-        return roomRepository.save(room);
+        Room savedRoom = roomRepository.save(room);
+
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "ROOM_CREATED",
+                        "roomId", savedRoom.getId(),
+                        "roomType", type.name(),
+                        "participantIds", List.of(creator.getId())
+                ));
+
+        return savedRoom;
     }
 
     @Transactional
@@ -68,7 +80,7 @@ public class RoomService {
 
         if (existingDM.isPresent()) {
             Room room = existingDM.get();
-            room.getParticipants().size(); // Initialize lazy collection
+            room.getParticipants().size();
             return room;
         }
 
@@ -85,7 +97,15 @@ public class RoomService {
         dmRoom.getParticipants().add(current);
         dmRoom.getParticipants().add(target);
 
-        return roomRepository.save(dmRoom);
+        Room savedRoom = roomRepository.save(dmRoom);
+
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "ROOM_CREATED",
+                        "roomId", savedRoom.getId(),
+                        "participantIds", List.of(current.getId(), target.getId())
+                ));
+
+        return savedRoom;
     }
 
     @Transactional(readOnly = true)
@@ -135,6 +155,16 @@ public class RoomService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         room.getParticipants().add(user);
         roomRepository.save(room);
+
+        // Broadcast a system message to the room that the user joined
+        ChatMessage joinedEvent = new ChatMessage(
+                roomId, 0L, "SYSTEM", "USER_JOINED:" + userId, System.currentTimeMillis()
+        );
+        redisPublisher.publish(joinedEvent);
+
+        // Notify global users so the added user spontaneously fetches the room
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "USER_ADDED_TO_ROOM", "roomId", roomId, "userId", userId));
     }
 
     @Transactional
@@ -159,14 +189,14 @@ public class RoomService {
         room.getParticipants().remove(userToRemove);
         roomRepository.save(room);
 
+        // Broadcast a system message that the user was removed
         ChatMessage removalEvent = new ChatMessage(
-                roomId,
-                0L, // System ID
-                "SYSTEM",
-                "USER_REMOVED:" + userId, // Special command string
-                System.currentTimeMillis()
+                roomId, 0L, "SYSTEM", "USER_REMOVED:" + userId, System.currentTimeMillis()
         );
         redisPublisher.publish(removalEvent);
+
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "USER_REMOVED_FROM_ROOM", "roomId", roomId, "targetId", userId));
     }
 
     @Transactional
@@ -186,13 +216,23 @@ public class RoomService {
             }
         }
 
+        // Send a direct chat signal to kick existing users before deleting
+        ChatMessage deleteEvent = new ChatMessage(
+                roomId, 0L, "SYSTEM", "ROOM_DELETED", System.currentTimeMillis()
+        );
+        redisPublisher.publish(deleteEvent);
+
         roomRepository.delete(room);
+
+        // Dispatch globally to strip it dynamically from sidebar views
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "ROOM_DELETED", "roomId", roomId));
     }
 
     @Transactional
     public Room updateTheme(String roomId, String theme, Long requesterId) {
         Room room = getRoom(roomId);
-
+        // ... [Remains identical]
         if (room.getType() == Room.RoomType.DIRECT) {
             boolean isParticipant = room.getParticipants().stream()
                     .anyMatch(p -> p.getId().equals(requesterId));
@@ -204,13 +244,13 @@ public class RoomService {
                 throw new SecurityException("Only creator can update theme");
             }
         }
-
         room.setTheme(theme);
         return roomRepository.save(room);
     }
 
     @Transactional
     public void clearMessages(String roomId, Long requesterId) {
+        // ... [Remains Identical]
         Room room = getRoom(roomId);
 
         if (room.getType() == Room.RoomType.DIRECT) {
@@ -233,7 +273,7 @@ public class RoomService {
         Optional<Room> existingDM = roomRepository.findDirectMessageRoom(user1Id, user2Id);
         if (existingDM.isPresent()) {
             Room room = existingDM.get();
-            room.getParticipants().size(); // Initialize lazy collection
+            room.getParticipants().size();
             return room;
         }
 
@@ -253,6 +293,15 @@ public class RoomService {
         dmRoom.getParticipants().add(user1);
         dmRoom.getParticipants().add(user2);
 
-        return roomRepository.save(dmRoom);
+        Room savedRoom = roomRepository.save(dmRoom);
+
+        // Ensure both users see the newly created DM immediately
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "ROOM_CREATED",
+                        "roomId", savedRoom.getId(),
+                        "participantIds", List.of(user1.getId(), user2.getId())
+                ));
+
+        return savedRoom;
     }
 }

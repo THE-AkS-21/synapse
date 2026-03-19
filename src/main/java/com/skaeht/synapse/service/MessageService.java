@@ -23,6 +23,7 @@ public class MessageService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final RoomRepository roomRepository;
+    private final RedisPublisher redisPublisher;
 
     @Transactional
     public Message saveMessage(ChatMessage chatMessage) {
@@ -60,6 +61,13 @@ public class MessageService {
 
         message.setDeleted(true);
         message.setContent("");
-        return messageRepository.save(message);
+        Message saved = messageRepository.save(message);
+
+        ChatMessage deleteEvent = new ChatMessage(
+                message.getRoom().getId(), 0L, "SYSTEM", "MESSAGE_DELETED:" + messageId, System.currentTimeMillis()
+        );
+        redisPublisher.publish(deleteEvent);
+
+        return saved;
     }
 }

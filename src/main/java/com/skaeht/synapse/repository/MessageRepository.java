@@ -4,6 +4,7 @@ import com.skaeht.synapse.entity.Message;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * ARCHITECTURE NOTE: High-Volume Message Store
@@ -13,6 +14,10 @@ import java.util.List;
 @Repository
 public interface MessageRepository extends JpaRepository<Message, Long> {
 
+    /**
+     * Look up by public UUID String instead of internal Long
+     */
+    Optional<Message> findByMessageId(String messageId);
     /**
      * Used for loading initial room history on client join.
      * CRITICAL: Requires a composite index on (room_id, timestamp) to prevent
@@ -43,4 +48,5 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
      * Used by MessageCleanupService to purge stale data asynchronously.
      */
     long deleteByTimestampBefore(long timestamp);
+
 }

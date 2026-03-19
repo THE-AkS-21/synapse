@@ -150,6 +150,15 @@ public class RoomService {
         Room room = getRoom(roomId);
         verifyRoomActionPermission(room, requesterId, "clear messages in");
         messageRepository.deleteByRoomId(roomId);
+
+        ChatMessage systemEvent = new ChatMessage(
+                roomId,
+                0L,
+                "SYSTEM",
+                "MESSAGES_CLEARED",
+                System.currentTimeMillis()
+        );
+        redisPublisher.publish(systemEvent);
     }
 
     @Transactional

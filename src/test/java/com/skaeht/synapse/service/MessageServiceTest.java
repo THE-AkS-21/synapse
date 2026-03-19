@@ -69,26 +69,28 @@ class MessageServiceTest {
     }
 
     @Test
-    void softDeleteMessage_Success() {
-        when(messageRepository.findById(10L)).thenReturn(Optional.of(testMessage));
-        when(messageRepository.save(any(Message.class))).thenReturn(testMessage);
+    void clearRoomMessages_Success() {
+        when(roomRepository.findById("room1")).thenReturn(Optional.of(testRoom));
+        doNothing().when(messageRepository).deleteByRoomId("room1");
 
-        // testUser (1L) is both the sender and the room creator
-        Message deleted = messageService.softDeleteMessage(10L, 1L);
-        assertTrue(deleted.isDeleted());
-        assertEquals("", deleted.getContent());
-        // Verify the system message was published for active clients
-        verify(redisPublisher, times(1)).publish(any(ChatMessage.class));
+        // Requester (1L) is the creator of the room
+        messageService.clearRoomMessages("room1", 1L);
+
+        // Verify DB was wiped and Redis published the cleared event
+        verify(messageRepository, times(1)).deleteByRoomId("room1");
+        verify(redisPublisher, times(1)).publish(argThat(msg ->
+                msg.getContent().equals("MESSAGES_CLEARED") && msg.getRoomId().equals("room1")));
     }
 
     @Test
-    void softDeleteMessage_Unauthorized() {
-        User otherUser = User.builder().id(2L).build();
-        testMessage.setSender(otherUser);
+    void clearRoomMessages_Unauthorized() {
+        when(roomRepository.findById("room1")).thenReturn(Optional.of(testRoom));
 
-        // Creator is testUser (1L), sender is otherUser (2L). Requester is 3L (Unauthorized).
-        when(messageRepository.findById(10L)).thenReturn(Optional.of(testMessage));
+        // Requester 3L is not the creator of testRoom (which belongs to 1L)
+        assertThrows(SecurityException.class, () -> messageService.clearRoomMessages("room1", 3L));
 
-        assertThrows(SecurityException.class, () -> messageService.softDeleteMessage(10L, 3L));
+        // Verify the database delete was never called due to the security exception
+        verify(messageRepository, never()).deleteByRoomId(anyString());
+        verify(redisPublisher, never()).publish(any(ChatMessage.class));
     }
 }

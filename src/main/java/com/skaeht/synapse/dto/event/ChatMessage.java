@@ -22,6 +22,7 @@ public class ChatMessage {
         private String content;
         private long timestamp;
         private String traceId;
+        private boolean isDeleted;
 
         public ChatMessage(String roomId, Long senderId, String senderUsername, String content, long timestamp) {
                 this.id = UUID.randomUUID().toString();
@@ -31,5 +32,6 @@ public class ChatMessage {
                 this.content = content;
                 this.timestamp = timestamp;
                 this.traceId = UUID.randomUUID().toString();
+                this.isDeleted = false;
         }
 }

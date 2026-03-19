@@ -74,8 +74,8 @@ public class MessageService {
      * @throws SecurityException if the requester is neither the sender nor the room creator.
      */
     @Transactional
-    public Message softDeleteMessage(Long messageId, Long requesterId) {
-        Message message = messageRepository.findById(messageId)
+    public Message softDeleteMessage(String messageId, Long requesterId) {
+        Message message = messageRepository.findByMessageId(messageId)
                 .orElseThrow(() -> new IllegalArgumentException("Message not found"));
 
         if (!message.getSender().getId().equals(requesterId) &&
@@ -93,5 +93,25 @@ public class MessageService {
         redisPublisher.publish(deleteEvent);
 
         return saved;
+    }
+
+    @Transactional
+    public void clearRoomMessages(String roomId, Long requesterId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+
+        // Authorization: Only the creator or participants in a DM can clear
+        if (room.getType() != Room.RoomType.DIRECT && room.getCreator() != null && !room.getCreator().getId().equals(requesterId)) {
+            throw new SecurityException("Only the room creator can clear messages");
+        }
+
+        // Delete from Database
+        messageRepository.deleteByRoomId(roomId);
+
+        // Broadcast to WebSocket clients so participants see the empty screen instantly
+        ChatMessage systemEvent = new ChatMessage(
+                roomId, 0L, "SYSTEM", "MESSAGES_CLEARED", System.currentTimeMillis()
+        );
+        redisPublisher.publish(systemEvent);
     }
 }

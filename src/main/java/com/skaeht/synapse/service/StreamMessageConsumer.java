@@ -1,80 +1,53 @@
 package com.skaeht.synapse.service;
 
 import com.skaeht.synapse.entity.Message;
-
 import com.skaeht.synapse.repository.MessageRepository;
+import com.skaeht.synapse.repository.RoomRepository;
+import com.skaeht.synapse.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.connection.stream.*;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Map;
 
+/**
+ * ARCHITECTURE NOTE: Native Spring Data Redis Stream Consumer
+ * This acts as a highly resilient queue worker. Redis Streams (unlike Pub/Sub) guarantee delivery.
+ * If the application crashes, the messages wait in the stream. When the app reboots,
+ * this consumer resumes reading, preventing message loss during deployments or outages.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Slf4j
-public class StreamMessageConsumer {
+public class StreamMessageConsumer implements StreamListener<String, MapRecord<String, String, String>> {
 
-    private final RedisTemplate<String, Object> redisTemplate;
     private final MessageRepository messageRepository;
+    private final RoomRepository roomRepository;
+    private final UserRepository userRepository;
 
-    private static final String STREAM = "messages:pending:stream";
-    private static final String GROUP = "batch-processor";
-    private static final String CONSUMER = "consumer-1";
-
-    @Scheduled(fixedDelay = 2000)
-    public void consumeMessages() {
+    @Override
+    public void onMessage(MapRecord<String, String, String> record) {
         try {
-            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-                    Consumer.from(GROUP, CONSUMER),
-                    StreamReadOptions.empty().count(100).block(Duration.ofSeconds(1)),
-                    StreamOffset.create(STREAM, ReadOffset.lastConsumed()));
+            Map<String, String> payload = record.getValue();
 
-            if (records == null || records.isEmpty())
-                return;
+            // USES getReferenceById to prevent N+1 SELECT execution during high-throughput ingestion
+            Message message = Message.builder()
+                    .messageId(payload.get("id"))
+                    .room(roomRepository.getReferenceById(payload.get("roomId")))
+                    .sender(userRepository.getReferenceById(Long.parseLong(payload.get("senderId"))))
+                    .content(payload.get("content"))
+                    .timestamp(Long.parseLong(payload.get("timestamp")))
+                    .isDeleted(false)
+                    .build();
 
-            List<Message> batch = new ArrayList<>();
-            List<RecordId> recordIds = new ArrayList<>();
+            messageRepository.save(message);
 
-            for (MapRecord<String, Object, Object> record : records) {
-                try {
-                    Message message = new Message();
-                    message.setMessageId((String) record.getValue().get("id"));
-                    message.setRoomId((String) record.getValue().get("roomId"));
-                    message.setContent((String) record.getValue().get("content"));
-                    Object senderIdRaw = record.getValue().get("senderId");
-                    if (senderIdRaw != null) {
-                        message.setSenderId(Long.parseLong(senderIdRaw.toString()));
-                    }
-                    message.setTimestamp(Long.parseLong((String) record.getValue().get("timestamp")));
-
-                    batch.add(message);
-                    recordIds.add(record.getId());
-                } catch (Exception e) {
-                    log.error("Failed to parse message properties {}", record.getId(), e);
-                }
-            }
-
-            if (!batch.isEmpty()) {
-                try {
-                    messageRepository.saveAll(batch);
-                    log.info("Persisted {} messages to PostgreSQL", batch.size());
-
-                    // Only acknowledge the consumed records AFTER safely putting them in the
-                    // database!
-                    RecordId[] ids = recordIds.toArray(new RecordId[0]);
-                    redisTemplate.opsForStream().acknowledge(STREAM, GROUP, ids);
-                } catch (Exception e) {
-                    log.error("Failed to persist message batch to database, aborting acknowledge...", e);
-                }
-            }
         } catch (Exception e) {
-            log.debug("Redis connection unavailable for stream consumption (likely test environment or shutdown): {}",
-                    e.getMessage());
+            // Note: In an enterprise system, failing here should trigger a DLQ (Dead Letter Queue)
+            // push, otherwise the consumer group might stall or infinitely retry poison pills.
+            log.error("Failed to persist stream message payload: {}", record.getId(), e);
         }
     }
 }

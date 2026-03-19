@@ -1,16 +1,19 @@
 package com.skaeht.synapse.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Entity representing a chat room or channel.
- * Supports different room types: PUBLIC, PRIVATE, DIRECT
+ * ARCHITECTURE NOTE: Room Aggregation Root
+ * Acts as the aggregate root for all group interactions.
+ * Note that the 'id' is a manually generated String (e.g., '1234-5678-9012') rather than
+ * an auto-incrementing Long to prevent external attackers from scraping room IDs
+ * sequentially.
  */
 @Entity
 @Table(name = "rooms", indexes = {
@@ -35,24 +38,26 @@ public class Room {
     @Column(nullable = false, length = 20)
     private RoomType type;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    /** Stable FK to users.id — NOT affected by username changes */
-    @Column(name = "creator_id")
-    private Long creatorId;
-
-    /** Kept for fallback display only — do not use for permission checks */
-//    @Column(name = "creator_username", length = 100)
-//    private String creatorUsername;
+    @ToString.Exclude
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "creator_id", updatable = false)
+    private User creator;
 
     @Column(name = "theme", length = 50)
     @Builder.Default
     private String theme = "default";
 
     @JsonIgnore
+    @ToString.Exclude
     @ManyToMany
-    @JoinTable(name = "room_participants", joinColumns = @JoinColumn(name = "room_id"), inverseJoinColumns = @JoinColumn(name = "user_id"))
+    @JoinTable(
+            name = "room_participants",
+            joinColumns = @JoinColumn(name = "room_id"),
+            inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
     @Builder.Default
     private Set<User> participants = new HashSet<>();
 
@@ -63,12 +68,9 @@ public class Room {
         }
     }
 
-    /**
-     * Room type enumeration
-     */
     public enum RoomType {
-        PUBLIC, // Open to all users
-        PRIVATE, // Invite-only
-        DIRECT // One-to-one conversation
+        PUBLIC,
+        PRIVATE,
+        DIRECT
     }
 }

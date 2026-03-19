@@ -1,92 +1,93 @@
 package com.skaeht.synapse.controller;
 
 import com.skaeht.synapse.entity.Invitation;
+import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.exception.ResourceNotFoundException;
 import com.skaeht.synapse.service.InvitationService;
+import com.skaeht.synapse.service.UserService;
+import com.skaeht.synapse.util.SecurityUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
-/**
- * REST controller for invitation management.
- * All endpoints require authentication (handled by SecurityConfig for
- * /api/v1/**).
- */
 @RestController
 @RequestMapping("/api/v1/invitations")
 @Slf4j
+@RequiredArgsConstructor
 public class InvitationController {
 
-    @Autowired
-    private InvitationService invitationService;
+    private final InvitationService invitationService;
+    private final UserService userService;
 
-    /**
-     * Send a room invitation.
-     * Body: { "roomId": "...", "toDisplayId": "XXXX-XXXX-XXXX" }
-     * Body: { "type": "DM", "toDisplayId": "XXXX-XXXX-XXXX" }
-     */
-    @PostMapping
-    public ResponseEntity<?> sendInvitation(@RequestBody Map<String, String> request, Authentication auth) {
-        String type = request.getOrDefault("type", "ROOM");
-        String toDisplayId = request.get("toDisplayId");
-
-        if (toDisplayId == null || toDisplayId.isBlank()) {
-            return ResponseEntity.badRequest().body("toDisplayId is required");
-        }
-
-        try {
-            if ("DM".equalsIgnoreCase(type)) {
-                Invitation inv = invitationService.sendDMInvitation(auth.getName(), toDisplayId);
-                return ResponseEntity.ok(inv);
-            } else {
-                String roomId = request.get("roomId");
-                if (roomId == null || roomId.isBlank()) {
-                    return ResponseEntity.badRequest().body("roomId is required for ROOM invitations");
-                }
-                Invitation inv = invitationService.sendRoomInvitation(roomId, auth.getName(), toDisplayId);
-                return ResponseEntity.ok(inv);
-            }
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(409).body(e.getMessage());
-        }
-    }
-
-    /** Get all pending invitations for the current user. */
     @GetMapping("/pending")
-    public ResponseEntity<List<Invitation>> getPendingInvitations(Authentication auth) {
-        List<Invitation> invitations = invitationService.getPendingInvitations(auth.getName());
-        return ResponseEntity.ok(invitations);
+    public ResponseEntity<List<Invitation>> getPendingInvitations(Authentication authentication) {
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        return ResponseEntity.ok(invitationService.getPendingInvitations(user.getUsername()));
     }
 
-    /** Accept an invitation. */
-    @PutMapping("/{id}/accept")
-    public ResponseEntity<?> acceptInvitation(@PathVariable Long id, Authentication auth) {
-        try {
-            invitationService.acceptInvitation(id, auth.getName());
-            return ResponseEntity.ok(Map.of("message", "Invitation accepted"));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(409).body(e.getMessage());
-        }
+    @PostMapping("/send")
+    public ResponseEntity<Invitation> sendInvitation(
+            @RequestParam String toUsername,
+            @RequestParam(required = false) String roomId,
+            Authentication authentication) {
+
+        String senderEmail = SecurityUtil.getCurrentUserEmail(authentication);
+        User sender = userService.findByEmail(senderEmail)
+                .orElseThrow(() -> new ResourceNotFoundException("Sender not found"));
+
+        /*
+         * ARCHITECTURE NOTE:
+         * We support legacy FE clients passing 'username' while new clients pass 'displayId'.
+         * We chain the lookups using Optional.or() for clean evaluation.
+         */
+        User target = userService.findByDisplayId(toUsername)
+                .or(() -> userService.findByUsername(toUsername))
+                .orElseThrow(() -> new ResourceNotFoundException("Target user not found"));
+
+        Invitation invitation = invitationService.createInvitation(sender.getId(), target.getId(), roomId);
+        return ResponseEntity.ok(invitation);
     }
 
-    /** Decline an invitation. */
-    @PutMapping("/{id}/decline")
-    public ResponseEntity<?> declineInvitation(@PathVariable Long id, Authentication auth) {
-        try {
-            invitationService.declineInvitation(id, auth.getName());
-            return ResponseEntity.ok(Map.of("message", "Invitation declined"));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(409).body(e.getMessage());
+    @PostMapping("/{invitationId}/respond")
+    public ResponseEntity<Void> respondToInvitation(
+            @PathVariable Long invitationId,
+            @RequestParam boolean accept,
+            Authentication authentication) {
+
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        invitationService.respondToInvitation(invitationId, accept, user.getUsername());
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/room/{roomId}/invite")
+    public ResponseEntity<String> inviteUser(
+            Authentication authentication,
+            @PathVariable String roomId,
+            @RequestParam String targetDisplayId) {
+
+        String senderEmail = SecurityUtil.getCurrentUserEmail(authentication);
+
+        User sender = userService.findByEmail(senderEmail)
+                .orElseThrow(() -> new ResourceNotFoundException("Sender not found"));
+
+        User target = userService.findByDisplayId(targetDisplayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Target user not found"));
+
+        if (sender.getId().equals(target.getId())) {
+            return ResponseEntity.badRequest().body("You cannot invite yourself.");
         }
+
+        invitationService.sendRoomInvitation(roomId, sender.getId(), target.getId());
+        return ResponseEntity.ok("Invitation sent successfully");
     }
 }

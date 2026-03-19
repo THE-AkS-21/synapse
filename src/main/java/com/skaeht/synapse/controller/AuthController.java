@@ -1,133 +1,110 @@
 package com.skaeht.synapse.controller;
 
-import com.skaeht.synapse.dto.AuthResponse;
-import com.skaeht.synapse.dto.LoginRequest;
-import com.skaeht.synapse.dto.RegisterRequest;
-import com.skaeht.synapse.entity.Room;
+import com.skaeht.synapse.dto.request.LoginRequest;
+import com.skaeht.synapse.dto.request.RegisterRequest;
+import com.skaeht.synapse.dto.response.AuthResponse;
+import com.skaeht.synapse.dto.response.UserProfileResponse;
+import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.security.JwtTokenProvider;
+import com.skaeht.synapse.security.UserDetailsImpl;
 import com.skaeht.synapse.service.PresenceService;
 import com.skaeht.synapse.service.RoomService;
 import com.skaeht.synapse.service.UserService;
+import com.skaeht.synapse.util.SecurityUtil;
 import jakarta.validation.Valid;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
-/**
- * REST controller for authentication operations (login and registration).
- */
+@Slf4j
 @RestController
 @RequestMapping("/api/auth")
+@RequiredArgsConstructor
 public class AuthController {
 
-    @Autowired
-    private AuthenticationManager authenticationManager;
+    private final AuthenticationManager authenticationManager;
+    private final JwtTokenProvider tokenProvider;
+    private final UserService userService;
+    private final PresenceService presenceService;
+    private final RoomService roomService;
 
-    @Autowired
-    private UserService userService;
-
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-
-    @Autowired private PresenceService presenceService;
-    @Autowired private RoomService roomService;
-
-    /**
-     * Authenticate user and return JWT token.
-     *
-     * @param loginRequest Login credentials
-     * @return JWT token and username
-     */
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        try {
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(loginRequest.email(), loginRequest.password())
+            );
 
-        // 1️⃣ Find user using email
-        var userOptional = userService.findByEmail(loginRequest.email());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            String jwt = tokenProvider.generateToken(authentication);
 
-        if (userOptional.isEmpty()) {
+            UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+
+            log.info("User {} logged in successfully", userDetails.getEmail());
+            return ResponseEntity.ok(new AuthResponse(jwt, userDetails.getActualUsername(), userDetails.getId()));
+
+        } catch (BadCredentialsException e) {
+            log.warn("Failed login attempt for email: {}", loginRequest.email());
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new AuthResponse(null, "Invalid email or password", null));
+                    .body(Map.of("message", "Invalid email or password"));
+        } catch (Exception e) {
+            log.error("Unexpected login error: ", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("message", "An unexpected error occurred"));
         }
-
-        var user = userOptional.get();
-
-        // 2️⃣ Authenticate using username internally
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                        user.getUsername(),
-                        loginRequest.password()));
-
-        // 3️⃣ Set authentication
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-
-        // 4️⃣ Generate JWT
-        String jwt = jwtTokenProvider.generateToken(authentication);
-
-        // 5️⃣ Return token + username
-        return ResponseEntity.ok(new AuthResponse(jwt, user.getUsername(), user.getId()));
     }
 
-    /**
-     * Register a new user.
-     *
-     * @param registerRequest User registration details
-     * @return Success or error message
-     */
     @PostMapping("/register")
-    public ResponseEntity<?> registerUser(@Valid @RequestBody RegisterRequest registerRequest) {
-        try {
-            com.skaeht.synapse.entity.User registered = userService.registerUser(
-                    registerRequest.username(),
-                    registerRequest.email(),
-                    registerRequest.password());
+    public ResponseEntity<UserProfileResponse> registerUser(@Valid @RequestBody RegisterRequest registerRequest) {
+        log.info("Registering new user with email: {}", registerRequest.email());
 
-            // Auto-login: authenticate the just-registered user to get JWT
-            Authentication authentication = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(
-                            registerRequest.username(),
-                            registerRequest.password()));
-            SecurityContextHolder.getContext().setAuthentication(authentication);
-            String jwt = jwtTokenProvider.generateToken(authentication);
+        User user = userService.registerUser(
+                registerRequest.username(),
+                registerRequest.email(),
+                registerRequest.password()
+        );
 
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new AuthResponse(jwt, registered.getUsername(), registered.getId()));
-
-        } catch (IllegalArgumentException e) {
-            String msg = e.getMessage();
-            // Determine if it's a username or email conflict (409) or other validation
-            // (400)
-            HttpStatus status = (msg != null && (msg.contains("Username") || msg.contains("Email")))
-                    ? HttpStatus.CONFLICT
-                    : HttpStatus.BAD_REQUEST;
-            return ResponseEntity.status(status)
-                    .body(java.util.Map.of("message", msg != null ? msg : "Registration failed"));
-        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail(), user.getDisplayId())
+        );
     }
 
     @PostMapping("/logout")
     public ResponseEntity<?> logoutUser(Authentication authentication) {
-        if (authentication != null) {
-            var userOpt = userService.findByUsername(authentication.getName());
-            if (userOpt.isPresent()) {
-                String userId = String.valueOf(userOpt.get().getId());
+        try {
+            String email = SecurityUtil.getCurrentUserEmail(authentication);
 
-                // Instantly remove user from all rooms to broadcast OFFLINE status to everyone
-                List<Room> userRooms = roomService.getUserRooms(userOpt.get().getId());
-                for (Room room : userRooms) {
-                    presenceService.userLeftRoom(userId, room.getId());
-                }
-            }
+            userService.findByEmail(email).ifPresent(user -> {
+                /*
+                 * ARCHITECTURE NOTE:
+                 * Using CompletableFuture here prevents the HTTP response from blocking while Redis updates.
+                 * Future Iteration: Move this logic entirely into an @Async method inside PresenceService
+                 * to keep the Controller strictly focused on HTTP routing.
+                 */
+                CompletableFuture.runAsync(() -> {
+                    roomService.getUserRooms(user.getId()).forEach(room ->
+                            presenceService.userLeftRoom(user.getId().toString(), room.getId())
+                    );
+                    log.info("Offline status broadcasted async for user email: {}", email);
+                });
+            });
+        } catch (IllegalStateException e) {
+            log.debug("Logout called with empty security context");
+        } finally {
+            // Always clear context regardless of presence broadcast success
+            SecurityContextHolder.clearContext();
         }
-        return ResponseEntity.ok().build();
+
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 }

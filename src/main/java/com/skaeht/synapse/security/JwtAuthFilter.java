@@ -4,7 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,68 +17,57 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
 
+/**
+ * ARCHITECTURE NOTE: Stateless Authentication Gateway
+ * This filter intercepts every incoming HTTP request to establish the security context.
+ * Because Synapse uses stateless JWTs (no HTTP Sessions), this filter must reconstruct
+ * the user's identity on every single request by verifying the cryptographic signature
+ * of the provided token.
+ */
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-
-    @Autowired
-    private UserDetailsService userDetailsService; // This is our UserDetailsServiceImpl
+    private final JwtTokenProvider tokenProvider;
+    private final UserDetailsService userDetailsService;
 
     @Override
-    protected void doFilterInternal(
-            @NonNull HttpServletRequest request,
-            @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain) throws ServletException, IOException {
-
+    protected void doFilterInternal(@NonNull HttpServletRequest request,
+                                    @NonNull HttpServletResponse response,
+                                    @NonNull FilterChain filterChain)
+            throws ServletException, IOException {
         try {
-            // Let OPTIONS requests through, they won't have the Authorization header
-            if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
-                filterChain.doFilter(request, response);
-                return;
-            }
+            String jwt = parseJwt(request);
 
-            String jwt = getJwtFromRequest(request);
-
-            // Check if token is valid
-            if (StringUtils.hasText(jwt) && jwtTokenProvider.validateToken(jwt)) {
-                // Get username from token
-                String username = jwtTokenProvider.getUsernameFromToken(jwt);
-
-                // Load user details (and set up Spring Security context)
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+            // SECURITY NOTE: We validate the token cryptographically before ever hitting the DB/Cache.
+            // This prevents malicious actors from causing DB lookups with forged tokens.
+            if (jwt != null && tokenProvider.validateToken(jwt)) {
+                String email = tokenProvider.getEmailFromToken(jwt);
+                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());
+
+                // Attach network details (IP address, session ID if applicable) for auditing
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        username,
-                        null,
-                        Collections.emptyList());
-
-                SecurityContextHolder.getContext().setAuthentication(authToken);
-            } else {
-                // Token validation failed or no token
+                SecurityContextHolder.getContext().setAuthentication(authentication);
             }
-        } catch (Exception ex) {
-            // In case of error, we don't set the authentication
-            logger.error("Could not set user authentication in security context", ex);
+        } catch (Exception e) {
+            // Do not throw the exception here, as it would break the filter chain and prevent
+            // Spring Security's AuthenticationEntryPoint from returning a proper 401 response.
+            log.error("Failed to establish user authentication in security context: {}", e.getMessage());
         }
 
-        // Continue the filter chain
         filterChain.doFilter(request, response);
     }
 
-    private String getJwtFromRequest(HttpServletRequest request) {
-        String bearerToken = request.getHeader("Authorization");
-
-        // Check if header is present and starts with "Bearer "
-        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7); // Return the token part
+    private String parseJwt(HttpServletRequest request) {
+        String headerAuth = request.getHeader("Authorization");
+        if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
+            return headerAuth.substring(7);
         }
         return null;
     }

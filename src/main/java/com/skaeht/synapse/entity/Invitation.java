@@ -6,10 +6,11 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 /**
- * Invitation entity — represents a pending room invite or DM invite sent from
- * one user to another.
- * The recipient is identified by displayId so there's no exposure of internal
- * user IDs.
+ * ARCHITECTURE NOTE: Connection Handshake Store
+ * Represents a pending, accepted, or declined invitation.
+ * By storing `fromUsername` and `toUsername` as Strings rather than hard Foreign Keys
+ * to the User table, we heavily optimize read performance for the notification tray
+ * (avoiding expensive JOINs just to show the inviter's name).
  */
 @Entity
 @Table(name = "invitations", indexes = {
@@ -27,22 +28,20 @@ public class Invitation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** The room being invited to (null for DM invitations) */
-    @Column(name = "room_id", length = 255)
+    @Column(name = "room_id", length = 255, updatable = false)
     private String roomId;
 
-    /** Room name for display purposes */
-    @Column(name = "room_name", length = 100)
+    @Column(name = "room_name", length = 100, updatable = false)
     private String roomName;
 
-    @Column(name = "from_username", nullable = false, length = 100)
+    @Column(name = "from_username", nullable = false, length = 100, updatable = false)
     private String fromUsername;
 
-    @Column(name = "to_username", nullable = false, length = 100)
+    @Column(name = "to_username", nullable = false, length = 100, updatable = false)
     private String toUsername;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false, length = 20)
+    @Column(name = "type", nullable = false, length = 20, updatable = false)
     private InvitationType type;
 
     @Enumerated(EnumType.STRING)
@@ -50,18 +49,19 @@ public class Invitation {
     @Builder.Default
     private InvitationStatus status = InvitationStatus.PENDING;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null)
+        if (createdAt == null) {
             createdAt = LocalDateTime.now();
+        }
     }
 
     public enum InvitationType {
-        ROOM, // Invited to join a room
-        DM // Invited to start a direct message conversation
+        ROOM,
+        DM
     }
 
     public enum InvitationStatus {

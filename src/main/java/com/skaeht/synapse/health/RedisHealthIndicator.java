@@ -1,6 +1,7 @@
 package com.skaeht.synapse.health;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -8,26 +9,29 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Custom health indicator for Redis.
- * Checks both connection and pub/sub functionality.
+ * ARCHITECTURE NOTE: Distributed Cache & Event Bus Liveness
+ * Redis acts as the central nervous system for Synapse's multi-node WebSocket delivery.
+ * If Redis becomes unresponsive, messages will not fan-out across instances. This probe
+ * alerts orchestrators to immediately flag the node as degraded, potentially triggering
+ * a circuit breaker or alert to PagerDuty before users notice dropped messages.
  */
+@Slf4j
 @Component("redis")
+@RequiredArgsConstructor
 public class RedisHealthIndicator implements HealthIndicator {
 
-    @Autowired
-    private RedisConnectionFactory redisConnectionFactory;
+    private final RedisConnectionFactory redisConnectionFactory;
 
     @Override
     public Health health() {
-        try {
-            RedisConnection connection = redisConnectionFactory.getConnection();
+        // SECURITY / MEMORY NOTE: Wrapping RedisConnection in a try-with-resources block
+        // is mandatory. Failing to close manual Redis connections will cause severe memory
+        // leaks and quickly exhaust the Redis server's max client connection limit.
+        try (RedisConnection connection = redisConnectionFactory.getConnection()) {
 
-            // Test basic connection with PING
             String pong = connection.ping();
 
-            connection.close();
-
-            if ("PONG".equals(pong)) {
+            if ("PONG".equalsIgnoreCase(pong)) {
                 return Health.up()
                         .withDetail("status", "Redis is UP")
                         .withDetail("ping", pong)
@@ -40,6 +44,7 @@ public class RedisHealthIndicator implements HealthIndicator {
             }
 
         } catch (Exception e) {
+            log.error("Redis health check failed: {}", e.getMessage());
             return Health.down()
                     .withDetail("status", "Redis connection failed")
                     .withDetail("error", e.getMessage())

@@ -1,24 +1,26 @@
 package com.skaeht.synapse.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.userdetails.UserDetails;
+import lombok.*;
 
-import java.util.Collection;
-import java.util.List;
+import java.time.Instant;
 
-@Data
-@Builder
+/**
+ * ARCHITECTURE NOTE: Core Identity Entity
+ * * IMPORTANT JPA FIX: Replaced @Data with @Getter and @Setter.
+ * Using @Data on a JPA entity generates equals() and hashCode() methods that evaluate
+ * all fields. If this entity is ever placed in a HashSet (e.g., inside Room.participants),
+ * it can trigger lazy-loading exceptions, infinite recursion, or massive performance drops.
+ */
+@Entity
+@Table(name = "users")
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@Entity
-@Table(name = "_user") // "user" is a reserved keyword in PostgreSQL
-public class User implements UserDetails {
+@Builder
+public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -27,56 +29,26 @@ public class User implements UserDetails {
     @Column(unique = true, nullable = false)
     private String username;
 
+    /**
+     * Public-facing immutable identifier (e.g. XXXX-XXXX-XXXX).
+     * Used for adding friends and invites without exposing the internal DB row ID.
+     */
+    @Column(unique = true, updatable = false)
+    private String displayId;
+
     @Column(unique = true, nullable = false)
     private String email;
 
+    @JsonIgnore
+    @ToString.Exclude
     @Column(nullable = false)
     private String password;
 
+    private String avatarUrl;
+
     /**
-     * Human-readable display ID shown in profile settings — format XXXX-XXXX-XXXX
+     * Updated via a write-behind Redis cache to prevent hammering the DB
+     * every time the user connects/disconnects.
      */
-    @Column(name = "display_id", unique = true, length = 14)
-    private String displayId;
-
-    // We can add roles, but for a simple chat, one role is fine
-    // For simplicity, we'll hardcode the role
-    // @Enumerated(EnumType.STRING)
-    // private Role role;
-
-    @Override
-    public Collection<? extends GrantedAuthority> getAuthorities() {
-        // For this simple app, every user is a 'USER'
-        return List.of(new SimpleGrantedAuthority("ROLE_USER"));
-    }
-
-    @Override
-    public String getPassword() {
-        return password;
-    }
-
-    @Override
-    public String getUsername() {
-        return username;
-    }
-
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
-
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
+    private Instant lastSeen;
 }

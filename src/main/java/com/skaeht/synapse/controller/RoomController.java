@@ -1,194 +1,160 @@
 package com.skaeht.synapse.controller;
 
+import com.skaeht.synapse.dto.response.RoomResponse;
+import com.skaeht.synapse.dto.response.UserProfileResponse;
 import com.skaeht.synapse.entity.Room;
+import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.exception.ResourceNotFoundException;
+import com.skaeht.synapse.security.UserDetailsImpl;
 import com.skaeht.synapse.service.RoomService;
+import com.skaeht.synapse.service.UserService;
+import com.skaeht.synapse.util.RoomMapperUtil;
+import com.skaeht.synapse.util.SecurityUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.Authentication;
-import com.skaeht.synapse.dto.UserProfileResponse;
-import java.util.stream.Collectors;
+import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 import java.util.Map;
 
-/**
- * REST controller for room management
- */
 @RestController
 @RequestMapping("/api/v1/rooms")
 @Slf4j
+@RequiredArgsConstructor
 public class RoomController {
 
-    @Autowired
-    private RoomService roomService;
+    private final RoomService roomService;
+    private final UserService userService;
 
-    @Autowired
-    private com.skaeht.synapse.service.UserService userService;
-
-    /** Create a new room */
     @PostMapping
-    public ResponseEntity<Room> createRoom(@RequestBody Map<String, String> request, Authentication authentication) {
+    public ResponseEntity<RoomResponse> createRoom(@RequestBody Map<String, String> request,
+                                                   Authentication authentication) {
         String name = request.get("name");
-        String typeStr = request.getOrDefault("type", "PUBLIC");
-        Room.RoomType type = Room.RoomType.valueOf(typeStr.toUpperCase());
+        Room.RoomType type = Room.RoomType.valueOf(request.getOrDefault("type", "PUBLIC").toUpperCase());
 
-        // Fetch the user to get their ID
-        var userOpt = userService.findByUsername(authentication.getName());
-        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // Pass the user ID instead of the username
-        Room room = roomService.createRoom(name, type, userOpt.get().getId());
-        return ResponseEntity.ok(room);
+        Room room = roomService.createRoom(name, type, user.getId());
+        return ResponseEntity.ok(RoomMapperUtil.toRoomResponse(room));
     }
 
-    /** Get room by ID */
     @GetMapping("/{roomId}")
-    public ResponseEntity<Room> getRoom(@PathVariable String roomId) {
+    public ResponseEntity<RoomResponse> getRoom(@PathVariable String roomId) {
         return roomService.getRoomById(roomId)
-                .map(ResponseEntity::ok)
+                .map(room -> ResponseEntity.ok(RoomMapperUtil.toRoomResponse(room)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Get all public rooms */
     @GetMapping("/public")
-    public ResponseEntity<Page<Room>> getPublicRooms(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(roomService.getPublicRooms(page, size));
+    public ResponseEntity<List<RoomResponse>> getPublicRooms() {
+        List<RoomResponse> safeRooms = roomService.getPublicRooms().stream()
+                .map(RoomMapperUtil::toRoomResponse)
+                .toList();
+        return ResponseEntity.ok(safeRooms);
     }
 
-    /** Get rooms for the authenticated user */
     @GetMapping("/user")
-    public ResponseEntity<List<Map<String, Object>>> getUserRooms(Authentication authentication) {
-        var userOpt = userService.findByUsername(authentication.getName());
-        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
-        com.skaeht.synapse.entity.User currentUser = userOpt.get();
+    public ResponseEntity<List<RoomResponse>> getUserRooms(Authentication authentication) {
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        List<Room> rooms = roomService.getRoomsForUser(currentUser.getUsername());
-
-        // Map Room entities to Maps so we can inject the DM Partner's details
-        List<Map<String, Object>> enrichedRooms = rooms.stream().map(room -> {
-            Map<String, Object> map = new java.util.HashMap<>();
-            map.put("id", room.getId());
-            map.put("name", room.getName());
-            map.put("type", room.getType().name());
-            map.put("creatorId", room.getCreatorId());
-            map.put("theme", room.getTheme());
-
-            // If it's a DM, find the OTHER user and attach their info
-            if (room.getType() == Room.RoomType.DIRECT) {
-                room.getParticipants().stream()
-                        .filter(p -> !p.getId().equals(currentUser.getId()))
-                        .findFirst()
-                        .ifPresent(partner -> {
-                            map.put("dmPartner", partner.getUsername());
-                            map.put("dmPartnerDisplayId", partner.getDisplayId());
-                        });
-            }
-            return map;
-        }).collect(Collectors.toList());
+        List<RoomResponse> enrichedRooms = roomService.getUserRooms(user.getId()).stream()
+                .map(RoomMapperUtil::toRoomResponse)
+                .toList();
 
         return ResponseEntity.ok(enrichedRooms);
     }
 
-    // 2. Add this NEW endpoint for clearing messages
     @DeleteMapping("/{roomId}/messages")
     public ResponseEntity<Void> clearRoomMessages(@PathVariable String roomId, Authentication authentication) {
-        var userOpt = userService.findByUsername(authentication.getName());
-        if (userOpt.isPresent()) {
-            roomService.clearMessages(roomId, userOpt.get().getId());
-            return ResponseEntity.ok().build();
-        }
-        return ResponseEntity.status(401).build();
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        roomService.clearMessages(roomId, user.getId());
+        return ResponseEntity.ok().build();
     }
 
-    /** Add a participant to a room */
     @PostMapping("/{roomId}/participants/{userId}")
     public ResponseEntity<Void> addParticipant(@PathVariable String roomId, @PathVariable Long userId) {
         roomService.addParticipant(roomId, userId);
         return ResponseEntity.ok().build();
     }
 
-    /** Remove a participant from a room (creator only) */
     @DeleteMapping("/{roomId}/participants/{userId}")
-    public ResponseEntity<Void> removeParticipant(
-            @PathVariable String roomId,
-            @PathVariable Long userId,
-            Authentication authentication) {
-        roomService.removeMember(roomId, userId, authentication.getName());
+    public ResponseEntity<Void> removeParticipant(@PathVariable String roomId,
+                                                  @PathVariable Long userId,
+                                                  Authentication authentication) {
+        String userEmail = SecurityUtil.getCurrentUserEmail(authentication);
+        roomService.removeMember(roomId, userId, userEmail);
         return ResponseEntity.ok().build();
     }
 
-    /** Create or get direct message room */
-    @PostMapping("/direct")
-    public ResponseEntity<Room> getOrCreateDirectRoom(@RequestBody Map<String, Long> request) {
-        Long user1Id = request.get("user1Id");
-        Long user2Id = request.get("user2Id");
-        return ResponseEntity.ok(roomService.getOrCreateDirectMessageRoom(user1Id, user2Id));
-    }
-
-    /** Delete a room (creator only) */
     @DeleteMapping("/{roomId}")
     public ResponseEntity<Void> deleteRoom(@PathVariable String roomId, Authentication authentication) {
-        roomService.deleteRoom(roomId, authentication.getName());
-        return ResponseEntity.ok().build();
+        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+        roomService.deleteRoom(roomId, userDetails.getId());
+        return ResponseEntity.noContent().build();
     }
 
-    /** Join a public room (authenticated user adds themselves) */
     @PostMapping("/{roomId}/join")
     public ResponseEntity<?> joinRoom(@PathVariable String roomId, Authentication authentication) {
-        var roomOpt = roomService.getRoomById(roomId);
-        if (roomOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-        var room = roomOpt.get();
+        Room room = roomService.getRoomById(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+
         if (room.getType() == Room.RoomType.PRIVATE) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN)
-                    .body(java.util.Map.of("message", "This room is private. You need an invitation to join."));
+            return ResponseEntity.status(403).body(Map.of("message", "This room is private."));
         }
-        // Get current user id from UserService via authentication name
-        var userOpt = userService.findByUsername(authentication.getName());
-        if (userOpt.isEmpty())
-            return ResponseEntity.status(401).build();
-        roomService.addParticipant(roomId, userOpt.get().getId());
-        return ResponseEntity.ok(room);
+
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        roomService.addParticipant(roomId, user.getId());
+        return ResponseEntity.ok(RoomMapperUtil.toRoomResponse(room));
     }
 
-    /** Update room theme (creator only) */
     @PatchMapping("/{roomId}/theme")
-    public ResponseEntity<Room> updateTheme(
-            @PathVariable String roomId,
-            @RequestBody Map<String, String> request,
-            Authentication authentication) {
-        String theme = request.get("theme");
+    public ResponseEntity<RoomResponse> updateTheme(@PathVariable String roomId,
+                                                    @RequestBody Map<String, String> request,
+                                                    Authentication authentication) {
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // Fetch the user to get their ID
-        var userOpt = userService.findByUsername(authentication.getName());
-        if (userOpt.isEmpty()) return ResponseEntity.status(401).build();
-
-        // Pass the user ID instead of the username
-        Room updated = roomService.updateTheme(roomId, theme, userOpt.get().getId());
-        return ResponseEntity.ok(updated);
+        Room updated = roomService.updateTheme(roomId, request.get("theme"), user.getId());
+        return ResponseEntity.ok(RoomMapperUtil.toRoomResponse(updated));
     }
 
-    // Endpoint to fetch ALL room participants (online + offline) safely
     @GetMapping("/{roomId}/participants")
     public ResponseEntity<List<UserProfileResponse>> getRoomParticipants(@PathVariable String roomId) {
-
-        List<com.skaeht.synapse.entity.User> rawUsers = roomService.getRoomParticipants(roomId);
-
-        // Map raw User entities to a safe DTO to prevent leaking passwords
-        List<UserProfileResponse> safeParticipants = rawUsers.stream()
-                .map(user -> new UserProfileResponse(
-                        user.getId(),
-                        user.getUsername(),
-                        user.getEmail(),
-                        user.getDisplayId()
-                ))
-                .collect(Collectors.toList());
+        List<UserProfileResponse> safeParticipants = roomService.getRoomParticipants(roomId).stream()
+                .map(user -> new UserProfileResponse(user.getId(), user.getUsername(), user.getEmail(), user.getDisplayId()))
+                .toList();
 
         return ResponseEntity.ok(safeParticipants);
+    }
+
+    @PostMapping("/direct")
+    public ResponseEntity<RoomResponse> startDirectMessage(@RequestBody Map<String, Long> request,
+                                                           Authentication authentication) {
+        Long user1Id = request.get("user1Id");
+        Long user2Id = request.get("user2Id");
+
+        String email = SecurityUtil.getCurrentUserEmail(authentication);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        if (!user.getId().equals(user1Id) && !user.getId().equals(user2Id)) {
+            return ResponseEntity.status(403).build();
+        }
+
+        Room dmRoom = roomService.getOrCreateDirectMessageByIds(user1Id, user2Id);
+        return ResponseEntity.ok(RoomMapperUtil.toRoomResponse(dmRoom));
     }
 }

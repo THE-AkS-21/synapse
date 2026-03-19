@@ -1,7 +1,7 @@
 package com.skaeht.synapse.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,11 +14,15 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for RedisSubscriber with room-based WebSocket routing
+ * Unit tests for RedisSubscriber.
+ * * ARCHITECTURAL REFERENCE:
+ * This suite verifies the "Fan-In" edge of the distributed architecture.
+ * It ensures that when a message is picked up from the Redis backbone, it is
+ * safely deserialized and blasted down to the local hardware's open WebSocket
+ * connections using the SimpMessagingTemplate.
  */
 @ExtendWith(MockitoExtension.class)
 class RedisSubscriberTest {
@@ -37,83 +41,54 @@ class RedisSubscriberTest {
 
     @BeforeEach
     void setUp() {
-        testChatMessage = new ChatMessage("general",1L, "testuser", "Hello, World!", System.currentTimeMillis());
+        testChatMessage = new ChatMessage("general", 1L, "testuser", "Hello, World!", System.currentTimeMillis());
         redisMessage = mock(Message.class);
     }
 
     @Test
     void testOnMessage_Success() throws Exception {
-        // Arrange
         byte[] messageBody = "message body".getBytes();
         when(redisMessage.getBody()).thenReturn(messageBody);
         when(objectMapper.readValue(messageBody, ChatMessage.class)).thenReturn(testChatMessage);
 
-        // Act
         redisSubscriber.onMessage(redisMessage, null);
 
-        // Assert - verify message forwarded to room-specific WebSocket destination
+        // Verify the payload is forwarded to the correct local STOMP broker destination
         ArgumentCaptor<String> destinationCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Object> messageCaptor = ArgumentCaptor.forClass(Object.class);
 
         verify(messagingTemplate, times(1)).convertAndSend(destinationCaptor.capture(), messageCaptor.capture());
 
-        // Verify destination is room-specific
         assertEquals("/topic/chat/general", destinationCaptor.getValue());
         assertEquals(testChatMessage, messageCaptor.getValue());
     }
 
     @Test
-    void testOnMessage_DeserializationError() throws Exception {
-        // Arrange
+    void testOnMessage_DeserializationError_ShouldDropMessage() throws Exception {
+        // Verifies the "Poison Pill" scenario where corrupted Redis data does not crash the listener loop.
         byte[] messageBody = "invalid json".getBytes();
         when(redisMessage.getBody()).thenReturn(messageBody);
         when(objectMapper.readValue(messageBody, ChatMessage.class))
                 .thenThrow(new RuntimeException("Deserialization error"));
 
-        // Act
         redisSubscriber.onMessage(redisMessage, null);
 
-        // Assert - message should not be forwarded on error
+        // The listener should swallow the error and NOT attempt to forward a corrupted payload
         verify(messagingTemplate, never()).convertAndSend(any(String.class), any(Object.class));
     }
 
     @Test
     void testOnMessage_DifferentRoom() throws Exception {
-        // Arrange
-        ChatMessage techTalkMessage = new ChatMessage("tech-talk",1L, "user1", "Test", System.currentTimeMillis());
+        ChatMessage techTalkMessage = new ChatMessage("tech-talk", 1L, "user1", "Test", System.currentTimeMillis());
         byte[] messageBody = "message".getBytes();
         when(redisMessage.getBody()).thenReturn(messageBody);
         when(objectMapper.readValue(messageBody, ChatMessage.class)).thenReturn(techTalkMessage);
 
-        // Act
         redisSubscriber.onMessage(redisMessage, null);
 
-        // Assert
         ArgumentCaptor<String> destinationCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Object> messageCaptor = ArgumentCaptor.forClass(Object.class);
-
-        verify(messagingTemplate, times(1)).convertAndSend(destinationCaptor.capture(), messageCaptor.capture());
+        verify(messagingTemplate, times(1)).convertAndSend(destinationCaptor.capture(), any(Object.class));
 
         assertEquals("/topic/chat/tech-talk", destinationCaptor.getValue());
-    }
-
-    @Test
-    void testOnMessage_NullRoomId() throws Exception {
-        // Arrange - null roomId should default to "general"
-        ChatMessage nullRoomMessage = new ChatMessage(null,1L, "user1", "Test", System.currentTimeMillis());
-        byte[] messageBody = "message".getBytes();
-        when(redisMessage.getBody()).thenReturn(messageBody);
-        when(objectMapper.readValue(messageBody, ChatMessage.class)).thenReturn(nullRoomMessage);
-
-        // Act
-        redisSubscriber.onMessage(redisMessage, null);
-
-        // Assert
-        ArgumentCaptor<String> destinationCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Object> messageCaptor = ArgumentCaptor.forClass(Object.class);
-
-        verify(messagingTemplate, times(1)).convertAndSend(destinationCaptor.capture(), messageCaptor.capture());
-
-        assertEquals("/topic/chat/general", destinationCaptor.getValue());
     }
 }

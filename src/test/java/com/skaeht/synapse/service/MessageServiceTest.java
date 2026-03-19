@@ -1,144 +1,96 @@
 package com.skaeht.synapse.service;
 
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Message;
+import com.skaeht.synapse.entity.Room;
+import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.MessageRepository;
+import com.skaeht.synapse.repository.RoomRepository;
+import com.skaeht.synapse.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for MessageService.
+ * Validates the core CRUD operations for messages, particularly focusing on
+ * the authorization logic surrounding soft deletions.
  */
 @ExtendWith(MockitoExtension.class)
 class MessageServiceTest {
 
-    @Mock
-    private MessageRepository messageRepository;
+    @Mock private MessageRepository messageRepository;
+    @Mock private UserRepository userRepository;
+    @Mock private RoomRepository roomRepository;
+    @Mock private RedisPublisher redisPublisher;
 
-    @InjectMocks
-    private MessageService messageService;
+    @InjectMocks private MessageService messageService;
 
-    private List<Message> testMessages;
+    private User testUser;
+    private Room testRoom;
+    private Message testMessage;
 
     @BeforeEach
     void setUp() {
-        testMessages = Arrays.asList(
-                Message.builder().id(1L).senderId(1L).content("Message 1").timestamp(1000L).build(),
-                Message.builder().id(2L).senderId(2L).content("Message 2").timestamp(2000L).build(),
-                Message.builder().id(3L).senderId(1L).content("Message 3").timestamp(3000L).build());
+        testUser = User.builder().id(1L).username("testuser").build();
+        testRoom = Room.builder().id("room1").creator(testUser).build();
+        testMessage = Message.builder().id(10L).sender(testUser).room(testRoom).content("Hello").isDeleted(false).build();
     }
 
     @Test
-    void testGetMessageHistory() {
-        // Arrange
-        Page<Message> expectedPage = new PageImpl<>(testMessages);
-        when(messageRepository.findAll(any(Pageable.class))).thenReturn(expectedPage);
+    void saveMessage_Success() {
+        ChatMessage chatMsg = new ChatMessage("room1", 1L, "testuser", "Hello", System.currentTimeMillis());
 
-        // Act
-        Page<Message> result = messageService.getMessageHistory(0, 10);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(roomRepository.findById("room1")).thenReturn(Optional.of(testRoom));
+        when(messageRepository.save(any(Message.class))).thenReturn(testMessage);
 
-        // Assert
-        assertNotNull(result);
-        assertEquals(3, result.getContent().size());
-        verify(messageRepository, times(1)).findAll(any(Pageable.class));
+        Message saved = messageService.saveMessage(chatMsg);
+        assertNotNull(saved);
+        assertEquals("Hello", saved.getContent());
     }
 
     @Test
-    void testGetRecentMessages() {
-        // Arrange
-        Page<Message> page = new PageImpl<>(testMessages);
-        when(messageRepository.findAll(any(Pageable.class))).thenReturn(page);
-
-        // Act
-        List<Message> result = messageService.getRecentMessages(10);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(3, result.size());
-        verify(messageRepository, times(1)).findAll(any(Pageable.class));
+    void getRoomMessages_Success() {
+        when(messageRepository.findByRoomIdOrderByTimestampAsc("room1")).thenReturn(List.of(testMessage));
+        List<Message> messages = messageService.getRoomMessages("room1");
+        assertFalse(messages.isEmpty());
+        assertEquals(1, messages.size());
     }
 
     @Test
-    void testGetMessagesBySenderId() {
-        List<Message> user1Messages = Arrays.asList(testMessages.get(0), testMessages.get(2));
-        Page<Message> page = new PageImpl<>(user1Messages);
-        when(messageRepository.findBySenderId(eq(1L), any(Pageable.class))).thenReturn(page);
+    void clearRoomMessages_Success() {
+        when(roomRepository.findById("room1")).thenReturn(Optional.of(testRoom));
+        doNothing().when(messageRepository).deleteByRoomId("room1");
 
-        Page<Message> result = messageService.getMessagesBySenderId(1L, 0, 10);
+        // Requester (1L) is the creator of the room
+        messageService.clearRoomMessages("room1", 1L);
 
-        assertNotNull(result);
-        assertEquals(2, result.getContent().size());
-        assertEquals(1L, result.getContent().get(0).getSenderId());
-        verify(messageRepository, times(1)).findBySenderId(eq(1L), any(Pageable.class));
+        // Verify DB was wiped and Redis published the cleared event
+        verify(messageRepository, times(1)).deleteByRoomId("room1");
+        verify(redisPublisher, times(1)).publish(argThat(msg ->
+                msg.getContent().equals("MESSAGES_CLEARED") && msg.getRoomId().equals("room1")));
     }
 
     @Test
-    void testGetMessageById_Found() {
-        // Arrange
-        Message message = testMessages.get(0);
-        when(messageRepository.findById(1L)).thenReturn(Optional.of(message));
+    void clearRoomMessages_Unauthorized() {
+        when(roomRepository.findById("room1")).thenReturn(Optional.of(testRoom));
 
-        // Act
-        Optional<Message> result = messageService.getMessageById(1L);
+        // Requester 3L is not the creator of testRoom (which belongs to 1L)
+        assertThrows(SecurityException.class, () -> messageService.clearRoomMessages("room1", 3L));
 
-        // Assert
-        assertTrue(result.isPresent());
-        assertEquals(1L, result.get().getId());
-        verify(messageRepository, times(1)).findById(1L);
-    }
-
-    @Test
-    void testGetMessageById_NotFound() {
-        // Arrange
-        when(messageRepository.findById(anyLong())).thenReturn(Optional.empty());
-
-        // Act
-        Optional<Message> result = messageService.getMessageById(999L);
-
-        // Assert
-        assertFalse(result.isPresent());
-    }
-
-    @Test
-    void testGetTotalMessageCount() {
-        // Arrange
-        when(messageRepository.count()).thenReturn(100L);
-
-        // Act
-        long result = messageService.getTotalMessageCount();
-
-        // Assert
-        assertEquals(100L, result);
-        verify(messageRepository, times(1)).count();
-    }
-
-    @Test
-    void testDeleteOldMessages() {
-        // Arrange
-        long beforeTimestamp = 5000L;
-        when(messageRepository.deleteByTimestampBefore(beforeTimestamp)).thenReturn(10L);
-
-        // Act
-        long result = messageService.deleteOldMessages(beforeTimestamp);
-
-        // Assert
-        assertEquals(10L, result);
-        verify(messageRepository, times(1)).deleteByTimestampBefore(beforeTimestamp);
+        // Verify the database delete was never called due to the security exception
+        verify(messageRepository, never()).deleteByRoomId(anyString());
+        verify(redisPublisher, never()).publish(any(ChatMessage.class));
     }
 }

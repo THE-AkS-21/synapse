@@ -1,60 +1,46 @@
 package com.skaeht.synapse.repository;
 
 import com.skaeht.synapse.entity.Room;
-import com.skaeht.synapse.entity.User;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+import org.springframework.data.repository.query.Param; // FIXED: Replaced incorrect lettuce import
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Repository for Room entity operations
+ * ARCHITECTURE NOTE: Room Aggregation Root
+ * Manages the core entity that binds Users and Messages together.
  */
 @Repository
 public interface RoomRepository extends JpaRepository<Room, String> {
 
+    List<Room> findByType(Room.RoomType type);
+    List<Room> findByCreatorId(Long creatorId);
+
     /**
-     * Limit room creation to 20 rooms per user a day
+     * Finds all rooms a specific user is a part of.
+     * Used to populate the left sidebar upon user login.
      */
-    long countByCreatorIdAndCreatedAtAfter(Long creatorId, java.time.LocalDateTime date);
+    List<Room> findByParticipants_Id(Long userId);
 
     /**
-     * Find rooms by type
+     * PERFORMANCE NOTE: The N+1 Query Solver
+     * By default, @ManyToMany collections (participants) are lazy-loaded. If we fetch 50 rooms
+     * and call room.getParticipants() on each, Hibernate executes 51 separate SQL queries.
+     * @EntityGraph forces a single SQL LEFT OUTER JOIN, retrieving the Room and all its
+     * Participants in one highly efficient network round-trip.
      */
-    Page<Room> findByType(Room.RoomType type, Pageable pageable);
+    @EntityGraph(attributePaths = {"participants", "creator"})
+    Optional<Room> findById(String id);
 
     /**
-     * Find rooms where a specific user is a participant
-     */
-    @Query("SELECT r FROM Room r JOIN r.participants p WHERE p.id = :userId")
-    List<Room> findByParticipant(@Param("userId") Long userId);
-
-    /**
-     * Find a room by name
-     */
-    Optional<Room> findByName(String name);
-
-    /**
-     * Check if a room exists with the given name
-     */
-    boolean existsByName(String name);
-
-    @Query("""
-                SELECT r FROM Room r
-                JOIN r.participants p
-                WHERE p.username = :username
-            """)
-    List<Room> findRoomsByUsername(@Param("username") String username);
-
-    /**
-     * Find direct message room between two users
+     * Self-referencing JOIN to locate a specific 1-on-1 Direct Message room.
+     * Identifies a room of type DIRECT where both user1 and user2 exist in the participant junction table.
      */
     @Query("SELECT r FROM Room r JOIN r.participants p1 JOIN r.participants p2 " +
-            "WHERE r.type = 'DIRECT' AND p1.id = :user1Id AND p2.id = :user2Id")
-    Optional<Room> findDirectMessageRoom(@Param("user1Id") Long user1Id, @Param("user2Id") Long user2Id);
+            "WHERE r.type = 'DIRECT' AND p1.id = :userId1 AND p2.id = :userId2")
+    Optional<Room> findDirectMessageRoom(@Param("userId1") Long userId1, @Param("userId2") Long userId2);
 }

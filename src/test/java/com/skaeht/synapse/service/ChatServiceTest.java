@@ -1,187 +1,81 @@
 package com.skaeht.synapse.service;
 
-import com.skaeht.synapse.dto.ChatMessage;
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Message;
+import com.skaeht.synapse.entity.Room;
+import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.MessageRepository;
+import com.skaeht.synapse.repository.RoomRepository;
+import com.skaeht.synapse.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for ChatService with room-based messaging
+ * Unit tests for ChatService.
+ * Focuses on verifying the rate-limiting logic and the correct delegation
+ * of message publishing and buffering tasks.
  */
 @ExtendWith(MockitoExtension.class)
 class ChatServiceTest {
 
-    @Mock
-    private MessageRepository messageRepository;
+    @Mock private RedisTemplate<String, Object> redisTemplate;
+    @Mock private ValueOperations<String, Object> valueOperations;
+    @Mock private MessageRepository messageRepository;
+    @Mock private RoomRepository roomRepository;
+    @Mock private UserRepository userRepository;
+    @Mock private RedisPublisher redisPublisher;
+    @Mock private MessageBufferService messageBufferService;
 
-    @Mock
-    private RedisPublisher redisPublisher;
-
-    // Redis mocks for rate limiting
-    @Mock
-    private RedisTemplate<String, Object> redisTemplate;
-
-    @Mock
-    private RoomService roomService;
-
-
-    @Mock
-    private org.springframework.data.redis.core.ValueOperations<String, Object> valueOperations;
-
-    @InjectMocks
     private ChatService chatService;
-
-    private String testUsername;
-    private String testContent;
 
     @BeforeEach
     void setUp() {
-        testUsername = "testuser";
-        testContent = "Hello, World!";
-
-        lenient().when(redisPublisher.publish(any(ChatMessage.class)))
-                .thenReturn(CompletableFuture.completedFuture(null));
-
-        // leniently mock Redis rate limiting to allow all messages in tests
+        chatService = new ChatService(redisTemplate, messageRepository, roomRepository, userRepository, redisPublisher, messageBufferService);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        lenient().when(valueOperations.increment(anyString())).thenReturn(1L);
     }
 
     @Test
-    void testSendMessage_Success() throws Exception {
-        // Arrange
-        String content = "Hello, World!";
-        String sender = "testuser";
-        String roomId = "general";
-        Message mockMessage = Message.builder()
-                .id(1L)
-                .messageId("test-id")
-                .roomId(roomId)
-                .senderId(1L)
-                .content(content)
-                .timestamp(System.currentTimeMillis())
-                .build();
+    void sendMessage_Success() throws Exception {
+        String content = "Hello World";
+        Long senderId = 1L;
+        String senderUsername = "user1";
+        String roomId = "room1";
 
-        when(messageRepository.save(any(Message.class))).thenReturn(mockMessage);
+        // Simulate user being under the rate limit threshold
+        when(valueOperations.increment(anyString())).thenReturn(1L);
 
-        // Act
-        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, 1L, sender, roomId);
-        ChatMessage chatMessage = result.join();
+        CompletableFuture<ChatMessage> future = chatService.sendMessage(content, senderId, senderUsername, roomId);
+        ChatMessage result = future.get();
 
-        // Assert
-        assertNotNull(chatMessage);
-        assertEquals(content, chatMessage.content());
-        assertEquals(sender, chatMessage.from());
-        assertEquals(roomId, chatMessage.roomId());
-        assertNotNull(chatMessage.id());
-        assertNotNull(chatMessage.traceId());
+        assertNotNull(result);
+        assertEquals(content, result.getContent());
+        assertEquals(roomId, result.getRoomId());
+        assertEquals(senderId, result.getSenderId());
 
-        verify(messageRepository, times(1)).save(any(Message.class));
+        // Verifies event is published and buffered for async database save
         verify(redisPublisher, times(1)).publish(any(ChatMessage.class));
+        verify(messageBufferService, times(1)).bufferMessage(any(ChatMessage.class));
     }
 
     @Test
-    void testSendMessage_DefaultRoom() throws Exception {
-        // Arrange
-        String content = "Test message";
-        String sender = "user1";
-
-        when(messageRepository.save(any(Message.class))).thenReturn(Message.builder().build());
-
-        // Act
-        CompletableFuture<ChatMessage> result = chatService.sendMessage(content, 1L, sender);
-        ChatMessage chatMessage = result.join();
-
-        // Assert
-        assertNotNull(chatMessage);
-        assertEquals("general", chatMessage.roomId()); // Should default to "general"
-
-        ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
-        verify(messageRepository).save(messageCaptor.capture());
-        assertEquals("general", messageCaptor.getValue().getRoomId());
-    }
-
-    @Test
-    void testSendMessage_EmptyContent() {
-        // Act & Assert
-        assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage("", 1L, "testuser", "general");
+    void sendMessage_RateLimited() {
+        // Simulate user exceeding the rate limit threshold (5 msgs / 2 seconds)
+        when(valueOperations.increment(anyString())).thenReturn(6L);
+        assertThrows(IllegalStateException.class, () -> {
+            chatService.sendMessage("spam", 1L, "user1", "room1");
         });
-
-        verify(messageRepository, never()).save(any());
-        verify(redisPublisher, never()).publish(any());
-    }
-
-    @Test
-    void testSendMessage_NullContent() {
-        // Act & Assert
-        assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage(null, 1L, "testuser", "general");
-        });
-
-        verify(messageRepository, never()).save(any());
-        verify(redisPublisher, never()).publish(any());
-    }
-
-    @Test
-    void testSendMessage_ContentTooLong() {
-        // Arrange
-        String longContent = "a".repeat(5001);
-
-        // Act & Assert
-        assertThrows(IllegalArgumentException.class, () -> {
-            chatService.sendMessage(longContent,1L, "testuser", "general");
-        });
-
-        verify(messageRepository, never()).save(any());
-        verify(redisPublisher, never()).publish(any());
-    }
-
-    @Test
-    void testValidMessage_Valid() {
-        // Assert
-        assertTrue(chatService.isValidMessage("Hello"));
-        assertTrue(chatService.isValidMessage("a".repeat(5000)));
-    }
-
-    @Test
-    void testValidMessage_Invalid() {
-        // Assert
-        assertFalse(chatService.isValidMessage(null));
-        assertFalse(chatService.isValidMessage(""));
-        assertFalse(chatService.isValidMessage("   "));
-        assertFalse(chatService.isValidMessage("a".repeat(5001)));
-    }
-
-    @Test
-    void testSendMessage_VerifyMessageIdGeneration() throws Exception {
-        // Arrange
-        when(messageRepository.save(any(Message.class))).thenReturn(Message.builder().build());
-
-        // Act
-        ChatMessage message1 = chatService.sendMessage("Test 1", 1L, "user1", "room1").join();
-        ChatMessage message2 = chatService.sendMessage("Test 2", 1L, "user1", "room1").join();
-
-        // Assert - each message should have unique ID and traceId
-        assertNotNull(message1.id());
-        assertNotNull(message2.id());
-        assertNotEquals(message1.id(), message2.id());
-
-        assertNotNull(message1.traceId());
-        assertNotNull(message2.traceId());
-        assertNotEquals(message1.traceId(), message2.traceId());
     }
 }

@@ -6,156 +6,157 @@ import com.skaeht.synapse.entity.User;
 import com.skaeht.synapse.repository.InvitationRepository;
 import com.skaeht.synapse.repository.RoomRepository;
 import com.skaeht.synapse.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 /**
- * Service for managing room and DM invitations.
+ * ARCHITECTURE NOTE: Invitation State Machine
+ * This service handles the lifecycle of asynchronous user connections (Room invites & DMs).
+ * It acts as a strict gatekeeper, verifying ownership and preventing race conditions
+ * (e.g., accepting an already declined invite) before touching the core Room aggregations.
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class InvitationService {
 
-    @Autowired
-    private InvitationRepository invitationRepository;
+    private final InvitationRepository invitationRepository;
+    private final UserRepository userRepository;
+    private final RoomRepository roomRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private RoomRepository roomRepository;
-
-    /**
-     * Send a room invitation to a user identified by their display ID.
-     * Only the room creator can invite users. Only PRIVATE rooms require
-     * invitations.
-     */
-    /**
-     * Send a room invitation to a user identified by their display ID.
-     * Only the room creator can invite users. Only PRIVATE rooms require
-     * invitations.
-     */
     @Transactional
-    public Invitation sendRoomInvitation(String roomId, String fromUsername, String toDisplayId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        // Get the inviting user to compare IDs
-        User fromUser = userRepository.findByUsername(fromUsername)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + fromUsername));
-
-        // Use creatorId for permission check
-        if (room.getCreatorId() != null && !room.getCreatorId().equals(fromUser.getId())) {
-            throw new IllegalStateException("Only the room creator can invite members");
-        }
-
-        User targetUser = userRepository.findByDisplayId(toDisplayId)
-                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-
-        if (targetUser.getUsername().equals(fromUsername)) {
-            throw new IllegalArgumentException("Cannot invite yourself");
-        }
-
-        // Check for duplicate pending invite
-        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
-                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
-            throw new IllegalStateException("Invitation already sent to this user");
-        }
-
-        Invitation invitation = Invitation.builder()
-                .roomId(roomId)
-                .roomName(room.getName())
-                .fromUsername(fromUsername)
-                .toUsername(targetUser.getUsername())
-                .type(Invitation.InvitationType.ROOM)
-                .build();
-
-        Invitation saved = invitationRepository.save(invitation);
-        log.info("Room invitation sent from {} to {} for room {}", fromUsername, targetUser.getUsername(), roomId);
-        return saved;
+    public Invitation createInvitation(Long senderId, Long targetId, String roomId) {
+        return (roomId != null && !roomId.trim().isEmpty())
+                ? sendRoomInvitation(roomId, senderId, targetId)
+                : sendDMInvitation(senderId, targetId);
     }
 
-    /**
-     * Send a DM invitation to a user identified by their display ID.
-     */
     @Transactional
-    public Invitation sendDMInvitation(String fromUsername, String toDisplayId) {
-        User targetUser = userRepository.findByDisplayId(toDisplayId)
-                .orElseThrow(() -> new IllegalArgumentException("No user found with ID: " + toDisplayId));
-
-        if (targetUser.getUsername().equals(fromUsername)) {
-            throw new IllegalArgumentException("Cannot invite yourself");
+    public void respondToInvitation(Long invitationId, boolean accept, String username) {
+        if (accept) {
+            acceptInvitation(invitationId, username);
+        } else {
+            declineInvitation(invitationId, username);
         }
-
-        Invitation invitation = Invitation.builder()
-                .fromUsername(fromUsername)
-                .toUsername(targetUser.getUsername())
-                .type(Invitation.InvitationType.DM)
-                .build();
-
-        Invitation saved = invitationRepository.save(invitation);
-        log.info("DM invitation sent from {} to {}", fromUsername, targetUser.getUsername());
-        return saved;
     }
 
-    /**
-     * Get all pending invitations for a user.
-     */
+    @Transactional(readOnly = true)
     public List<Invitation> getPendingInvitations(String username) {
         return invitationRepository.findByToUsernameAndStatusOrderByCreatedAtDesc(
                 username, Invitation.InvitationStatus.PENDING);
     }
 
-    /**
-     * Accept an invitation — adds user to room (for ROOM type) or creates DM room
-     * (for DM type).
-     */
     @Transactional
     public void acceptInvitation(Long invitationId, String username) {
-        Invitation invitation = invitationRepository.findById(invitationId)
-                .orElseThrow(() -> new IllegalArgumentException("Invitation not found"));
-
-        if (!invitation.getToUsername().equals(username)) {
-            throw new IllegalStateException("Not your invitation");
-        }
-
-        if (invitation.getStatus() != Invitation.InvitationStatus.PENDING) {
-            throw new IllegalStateException("Invitation already handled");
-        }
+        Invitation invitation = validateAndGetInvitation(invitationId, username, Invitation.InvitationStatus.PENDING);
 
         if (invitation.getType() == Invitation.InvitationType.ROOM) {
             Room room = roomRepository.findById(invitation.getRoomId())
                     .orElseThrow(() -> new IllegalArgumentException("Room no longer exists"));
-            User user = userRepository.findByUsername(username)
-                    .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+            // Uses getReferenceById to avoid unnecessary SELECT queries when associating existing entities
+            User user = userRepository.getReferenceById(
+                    userRepository.findByUsername(username).orElseThrow().getId()
+            );
+
             room.getParticipants().add(user);
             roomRepository.save(room);
         }
-        // DM type: the frontend will call POST /api/v1/rooms with type DIRECT
 
+        // DM Type handling is deferred to the frontend routing POST /api/v1/rooms with type DIRECT
         invitation.setStatus(Invitation.InvitationStatus.ACCEPTED);
         invitationRepository.save(invitation);
+
         log.info("Invitation {} accepted by {}", invitationId, username);
     }
 
-    /**
-     * Decline an invitation.
-     */
     @Transactional
     public void declineInvitation(Long invitationId, String username) {
+        Invitation invitation = validateAndGetInvitation(invitationId, username, null);
+
+        invitation.setStatus(Invitation.InvitationStatus.DECLINED);
+        invitationRepository.save(invitation);
+
+        log.info("Invitation {} declined by {}", invitationId, username);
+    }
+
+    @Transactional
+    public Invitation sendRoomInvitation(String roomId, Long senderId, Long targetId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        User fromUser = userRepository.findById(senderId)
+                .orElseThrow(() -> new IllegalArgumentException("Sender not found"));
+        User targetUser = userRepository.findById(targetId)
+                .orElseThrow(() -> new IllegalArgumentException("Target user not found"));
+
+        if (room.getCreator() != null && !room.getCreator().getId().equals(fromUser.getId())) {
+            throw new IllegalStateException("Only the room creator can invite members");
+        }
+        if (targetUser.getId().equals(fromUser.getId())) {
+            throw new IllegalArgumentException("Cannot invite yourself");
+        }
+        if (invitationRepository.existsByRoomIdAndToUsernameAndStatus(
+                roomId, targetUser.getUsername(), Invitation.InvitationStatus.PENDING)) {
+            throw new IllegalStateException("Invitation already sent to this user");
+        }
+
+        Invitation saved = invitationRepository.save(Invitation.builder()
+                .roomId(roomId)
+                .roomName(room.getName())
+                .fromUsername(fromUser.getUsername())
+                .toUsername(targetUser.getUsername())
+                .type(Invitation.InvitationType.ROOM)
+                .build());
+
+        broadcastInvitationEvent(targetUser.getId(), fromUser.getUsername());
+        return saved;
+    }
+
+    @Transactional
+    public Invitation sendDMInvitation(Long senderId, Long targetId) {
+        User fromUser = userRepository.findById(senderId)
+                .orElseThrow(() -> new IllegalArgumentException("Sender not found"));
+        User targetUser = userRepository.findById(targetId)
+                .orElseThrow(() -> new IllegalArgumentException("Target user not found"));
+
+        if (targetUser.getId().equals(fromUser.getId())) {
+            throw new IllegalArgumentException("Cannot invite yourself");
+        }
+
+        Invitation saved = invitationRepository.save(Invitation.builder()
+                .fromUsername(fromUser.getUsername())
+                .toUsername(targetUser.getUsername())
+                .type(Invitation.InvitationType.DM)
+                .build());
+
+        broadcastInvitationEvent(targetUser.getId(), fromUser.getUsername());
+        return saved;
+    }
+
+    // --- DRY Helpers ---
+
+    private Invitation validateAndGetInvitation(Long invitationId, String username, Invitation.InvitationStatus requiredStatus) {
         Invitation invitation = invitationRepository.findById(invitationId)
                 .orElseThrow(() -> new IllegalArgumentException("Invitation not found"));
 
         if (!invitation.getToUsername().equals(username)) {
-            throw new IllegalStateException("Not your invitation");
+            throw new SecurityException("Security Violation: Attempted to modify an invitation belonging to another user");
         }
+        if (requiredStatus != null && invitation.getStatus() != requiredStatus) {
+            throw new IllegalStateException("Invitation is no longer pending");
+        }
+        return invitation;
+    }
 
-        invitation.setStatus(Invitation.InvitationStatus.DECLINED);
-        invitationRepository.save(invitation);
-        log.info("Invitation {} declined by {}", invitationId, username);
+    private void broadcastInvitationEvent(Long targetId, String fromUsername) {
+        messagingTemplate.convertAndSend("/topic/global-events",
+                Map.of("type", "INVITATION_RECEIVED", "targetId", targetId, "fromUsername", fromUsername));
     }
 }

@@ -1,360 +1,214 @@
 package com.skaeht.synapse.service;
 
+import com.skaeht.synapse.dto.event.ChatMessage;
 import com.skaeht.synapse.entity.Room;
 import com.skaeht.synapse.entity.User;
+import com.skaeht.synapse.exception.ResourceNotFoundException;
 import com.skaeht.synapse.repository.MessageRepository;
 import com.skaeht.synapse.repository.RoomRepository;
 import com.skaeht.synapse.repository.UserRepository;
+import com.skaeht.synapse.util.IdGeneratorUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-/**
- * Service for managing chat rooms and channels
- */
-@Service
 @Slf4j
+@Service
+@RequiredArgsConstructor
 public class RoomService {
 
-    @Autowired
-    private RoomRepository roomRepository;
+    private final RoomRepository roomRepository;
+    private final UserRepository userRepository;
+    private final MessageRepository messageRepository;
+    private final RedisPublisher redisPublisher;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    @Autowired
-    private MessageRepository messageRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private org.springframework.messaging.simp.SimpMessagingTemplate messagingTemplate;
-
-    private String generateRoomId() {
-        String chars = "0123456789";
-        StringBuilder sb = new StringBuilder(14);
-        java.security.SecureRandom random = new java.security.SecureRandom();
-        for (int i = 0; i < 14; i++) {
-            if (i == 4 || i == 9) {
-                sb.append('-');
-            } else {
-                sb.append(chars.charAt(random.nextInt(chars.length())));
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Create a new room
-     */
     @Transactional
     public Room createRoom(String name, Room.RoomType type, Long creatorId) {
-        // Room creation limit per user (20 for a day)
-        if (creatorId != null) {
-            long createdToday = roomRepository.countByCreatorIdAndCreatedAtAfter(
-                    creatorId, java.time.LocalDateTime.now().minusDays(1)
-            );
-            if (createdToday >= 20) {
-                throw new IllegalStateException("You have reached the limit of 20 rooms per day.");
-            }
-        }
-
-        // Only enforce unique rooms names for PUBLIC/PRIVATE (not DIRECT rooms which
-        // use internal names)
-        if (type != Room.RoomType.DIRECT && roomRepository.existsByName(name)) {
-            throw new IllegalArgumentException("Room with name '" + name + "' already exists");
-        }
+        User creator = userRepository.findById(creatorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator not found"));
 
         Room room = Room.builder()
-                .id(generateRoomId())
+                .id(IdGeneratorUtil.generateNumericRoomId())
                 .name(name)
                 .type(type)
-                .creatorId(creatorId)
+                .creator(creator)
+                .participants(new HashSet<>())
                 .build();
 
-        if (creatorId != null) {
-            User creator = userRepository.findById(creatorId)
-                    .orElseThrow(() -> new IllegalArgumentException("Creator user not found"));
-            room.getParticipants().add(creator);
-        }
-
+        room.getParticipants().add(creator);
         Room savedRoom = roomRepository.save(room);
-        log.info("Created room: {} (type: {}) by [id={}]", name, type, room.getCreatorId());
+
+        broadcastGlobalEvent("ROOM_CREATED", savedRoom.getId(), Map.of(
+                "roomType", type.name(),
+                "participantIds", List.of(creator.getId())
+        ));
+
         return savedRoom;
-    }
-
-    /**
-     * Get or create a direct message room between two users
-     */
-    @Transactional
-    public Room getOrCreateDirectMessageRoom(Long user1Id, Long user2Id) {
-        // Check if room already exists
-        Optional<Room> existingRoom = roomRepository.findDirectMessageRoom(user1Id, user2Id);
-        if (existingRoom.isPresent()) {
-            return existingRoom.get();
-        }
-
-        // Also check reverse order
-        existingRoom = roomRepository.findDirectMessageRoom(user2Id, user1Id);
-        if (existingRoom.isPresent()) {
-            return existingRoom.get();
-        }
-
-        // Create new direct message room
-        User user1 = userRepository.findById(user1Id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + user1Id));
-        User user2 = userRepository.findById(user2Id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + user2Id));
-
-        String roomName = "dm_" + Math.min(user1Id, user2Id) + "_" + Math.max(user1Id, user2Id);
-
-        Room room = Room.builder()
-                .id(generateRoomId())
-                .name(roomName)
-                .type(Room.RoomType.DIRECT)
-                .build();
-
-        room.getParticipants().add(user1);
-        room.getParticipants().add(user2);
-
-        Room savedRoom = roomRepository.save(room);
-        log.info("Created direct message room between users {} and {}", user1Id, user2Id);
-        return savedRoom;
-    }
-
-    /**
-     * Add a user to a room
-     */
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void addParticipant(String roomId, Long userId) {
-
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        // Limit room members up to 100
-        if (room.getParticipants().size() >= 100) {
-            throw new IllegalStateException("Room is full. Maximum limit is 100 members.");
-        }
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
-
-        if (room.getType() == Room.RoomType.DIRECT) {
-            throw new IllegalArgumentException("Cannot add participants to direct message rooms");
-        }
-
-        room.getParticipants().add(user);
-        roomRepository.save(room);
-        log.info("Added user {} to room {}", userId, roomId);
-    }
-
-    /**
-     * Remove a user from a room
-     */
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void removeParticipant(String roomId, Long userId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        room.getParticipants().removeIf(user -> user.getId().equals(userId));
-        roomRepository.save(room);
-        log.info("Removed user {} from room {}", userId, roomId);
-    }
-
-    /**
-     * Get a room by ID
-     */
-    @Cacheable(value = "rooms", key = "#roomId")
-    public Optional<Room> getRoomById(String roomId) {
-        return roomRepository.findById(roomId);
-    }
-
-    /**
-     * Get a room by name
-     */
-    public Optional<Room> getRoomByName(String name) {
-        return roomRepository.findByName(name);
-    }
-
-    /**
-     * Get all rooms by type with pagination
-     */
-    public Page<Room> getRoomsByType(Room.RoomType type, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size);
-        return roomRepository.findByType(type, pageable);
-    }
-
-    /**
-     * Get all rooms a user is a participant in
-     */
-    public List<Room> getUserRooms(Long userId) {
-        return roomRepository.findByParticipant(userId);
-    }
-
-    /**
-     * Check if a user is a participant in a room
-     */
-    public boolean isParticipant(String roomId, Long userId) {
-        Optional<Room> room = roomRepository.findById(roomId);
-        if (room.isEmpty()) {
-            return false;
-        }
-
-        return room.get().getParticipants().stream()
-                .anyMatch(user -> user.getId().equals(userId));
-    }
-
-    /**
-     * Get all public rooms
-     */
-    public Page<Room> getPublicRooms(int page, int size) {
-        return getRoomsByType(Room.RoomType.PUBLIC, page, size);
     }
 
     @Transactional(readOnly = true)
-    public List<Room> getRoomsForUser(String username) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + username));
-
-        List<Room> rooms = roomRepository.findByParticipant(user.getId());
-
-        // Explicitly initialize the lazy-loaded participants collection for DMs
-        // to prevent a LazyInitializationException in the controller
-        rooms.forEach(room -> {
-            if (room.getType() == Room.RoomType.DIRECT) {
-                room.getParticipants().size(); // This triggers Hibernate to fetch the data
-            }
+    public Optional<Room> getRoomById(String roomId) {
+        return roomRepository.findById(roomId).map(room -> {
+            room.getParticipants().size(); // HIBERNATE HACK: Force initialize lazy collection before TX closes
+            return room;
         });
+    }
 
+    @Transactional(readOnly = true)
+    public Room getRoom(String roomId) {
+        return getRoomById(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found: " + roomId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<Room> getPublicRooms() {
+        List<Room> rooms = roomRepository.findByType(Room.RoomType.PUBLIC);
+        rooms.forEach(room -> room.getParticipants().size()); // Initialize lazy collections
         return rooms;
     }
 
-    /**
-     * Delete a room — only allowed by the creator (by stable user ID).
-     */
+    @Transactional(readOnly = true)
+    public List<Room> getUserRooms(Long userId) {
+        List<Room> rooms = roomRepository.findByParticipants_Id(userId);
+        rooms.forEach(room -> room.getParticipants().size()); // Initialize lazy collections
+        return rooms;
+    }
 
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void deleteRoom(String roomId, Long requestingUserId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        // For DMs, ANY participant can delete the chat
-        if (room.getType() == Room.RoomType.DIRECT) {
-            boolean isParticipant = room.getParticipants().stream()
-                    .anyMatch(u -> u.getId().equals(requestingUserId));
-            if (!isParticipant) {
-                throw new IllegalStateException("Only participants can delete a DM");
-            }
-        } else {
-            // For regular rooms, only the creator can delete
-            if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
-                throw new IllegalStateException("Only the room creator can delete this room");
-            }
-        }
-
-        messageRepository.deleteByRoomId(roomId);
-        roomRepository.deleteById(roomId);
-
-        java.util.Map<String, String> payload = new java.util.HashMap<>();
-        payload.put("type", "ROOM_DELETED");
-        payload.put("roomId", roomId);
-        messagingTemplate.convertAndSend("/topic/global-events", payload);
-
-        log.info("Deleted room {} by userId={}", roomId, requestingUserId);
+    @Transactional(readOnly = true)
+    public List<User> getRoomParticipants(String roomId) {
+        return new ArrayList<>(getRoom(roomId).getParticipants());
     }
 
     @Transactional
-    public void clearMessages(String roomId, Long requestingUserId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+    public void addParticipant(String roomId, Long userId) {
+        Room room = getRoom(roomId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        if (room.getType() != Room.RoomType.DIRECT &&
-                (room.getCreatorId() == null || !room.getCreatorId().equals(requestingUserId))) {
-            throw new IllegalStateException("Only the room admin can clear messages");
-        }
-
-        // Delete all messages for this room
-        messageRepository.deleteByRoomId(roomId);
-
-        // Broadcast event so frontend can clear UI instantly
-        java.util.Map<String, String> payload = new java.util.HashMap<>();
-        payload.put("type", "MESSAGES_CLEARED");
-        payload.put("roomId", roomId);
-        messagingTemplate.convertAndSend("/topic/room/" + roomId, payload);
-
-        log.info("Cleared all messages in room {} by userId={}", roomId, requestingUserId);
-    }
-
-    /** Backward-compat overload by username (resolves to userId) */
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void deleteRoom(String roomId, String requestingUsername) {
-        User u = userRepository.findByUsername(requestingUsername)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        deleteRoom(roomId, u.getId());
-    }
-
-    /**
-     * Remove a member from a room — only allowed by the creator (by stable user
-     * ID).
-     */
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void removeMember(String roomId, Long userId, Long requestingUserId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-        if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
-            throw new IllegalStateException("Only the room creator can remove members");
-        }
-        room.getParticipants().removeIf(user -> user.getId().equals(userId));
+        room.getParticipants().add(user);
         roomRepository.save(room);
-        log.info("Removed userId={} from room {} by userId={}", userId, roomId, requestingUserId);
+
+        redisPublisher.publish(new ChatMessage(roomId, 0L, "SYSTEM", "USER_JOINED:" + userId, System.currentTimeMillis()));
+        broadcastGlobalEvent("USER_ADDED_TO_ROOM", roomId, Map.of("userId", userId));
     }
 
-    /** Backward-compat overload by username */
     @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public void removeMember(String roomId, Long userId, String requestingUsername) {
-        User u = userRepository.findByUsername(requestingUsername)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        removeMember(roomId, userId, u.getId());
-    }
-
-    /**
-     * Update room theme — only allowed by the creator
-     */
-    @Transactional
-    @CacheEvict(value = "rooms", key = "#roomId")
-    public Room updateTheme(String roomId, String theme, Long requestingUserId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-
-        if (room.getCreatorId() != null && !room.getCreatorId().equals(requestingUserId)) {
-            throw new IllegalStateException("Only the room creator can change the theme");
+    public void removeMember(String roomId, Long userId, String requesterEmail) {
+        Room room = getRoom(roomId);
+        if (room.getType() == Room.RoomType.DIRECT) {
+            throw new SecurityException("Cannot remove members from a direct message chat");
         }
+
+        User requester = userRepository.findByEmail(requesterEmail)
+                .orElseThrow(() -> new ResourceNotFoundException("Requester not found"));
+
+        boolean isCreator = room.getCreator() != null && room.getCreator().getId().equals(requester.getId());
+        boolean isSelf = requester.getId().equals(userId);
+
+        if (!isCreator && !isSelf) {
+            throw new SecurityException("Not authorized to remove member");
+        }
+
+        room.getParticipants().removeIf(p -> p.getId().equals(userId));
+        roomRepository.save(room);
+
+        redisPublisher.publish(new ChatMessage(roomId, 0L, "SYSTEM", "USER_REMOVED:" + userId, System.currentTimeMillis()));
+        broadcastGlobalEvent("USER_REMOVED_FROM_ROOM", roomId, Map.of("targetId", userId));
+    }
+
+    @Transactional
+    public void deleteRoom(String roomId, Long requesterId) {
+        Room room = getRoom(roomId);
+        verifyRoomActionPermission(room, requesterId, "delete");
+
+        redisPublisher.publish(new ChatMessage(roomId, 0L, "SYSTEM", "ROOM_DELETED", System.currentTimeMillis()));
+        roomRepository.delete(room);
+        broadcastGlobalEvent("ROOM_DELETED", roomId, Map.of());
+    }
+
+    @Transactional
+    public Room updateTheme(String roomId, String theme, Long requesterId) {
+        Room room = getRoom(roomId);
+        verifyRoomActionPermission(room, requesterId, "update theme for");
 
         room.setTheme(theme);
         return roomRepository.save(room);
     }
 
-    @Transactional(readOnly = true)
-    public List<User> getRoomParticipants(String roomId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+    @Transactional
+    public void clearMessages(String roomId, Long requesterId) {
+        Room room = getRoom(roomId);
+        verifyRoomActionPermission(room, requesterId, "clear messages in");
+        messageRepository.deleteByRoomId(roomId);
 
-        // Explicitly initialize the lazy-loaded collection
-        room.getParticipants().size();
+        ChatMessage systemEvent = new ChatMessage(
+                roomId,
+                0L,
+                "SYSTEM",
+                "MESSAGES_CLEARED",
+                System.currentTimeMillis()
+        );
+        redisPublisher.publish(systemEvent);
+    }
 
-        return new java.util.ArrayList<>(room.getParticipants());
+    @Transactional
+    public Room getOrCreateDirectMessageByIds(Long user1Id, Long user2Id) {
+        return roomRepository.findDirectMessageRoom(user1Id, user2Id).map(room -> {
+            room.getParticipants().size(); // Force lazy init
+            return room;
+        }).orElseGet(() -> {
+            User user1 = userRepository.findById(user1Id).orElseThrow();
+            User user2 = userRepository.findById(user2Id).orElseThrow();
+
+            Room dmRoom = Room.builder()
+                    .id(IdGeneratorUtil.generateNumericRoomId())
+                    .name(user1.getUsername() + "_" + user2.getUsername())
+                    .type(Room.RoomType.DIRECT)
+                    .participants(new HashSet<>(List.of(user1, user2)))
+                    .build();
+
+            Room savedRoom = roomRepository.save(dmRoom);
+
+            broadcastGlobalEvent("ROOM_CREATED", savedRoom.getId(), Map.of(
+                    "participantIds", List.of(user1.getId(), user2.getId())
+            ));
+
+            return savedRoom;
+        });
+    }
+
+    // --- DRY HELPER METHODS --- //
+
+    /** Centralized permission check to DRY up controller actions */
+    private void verifyRoomActionPermission(Room room, Long requesterId, String action) {
+        if (room.getType() == Room.RoomType.DIRECT) {
+            boolean isParticipant = room.getParticipants().stream()
+                    .anyMatch(p -> p.getId().equals(requesterId));
+            if (!isParticipant) {
+                throw new AccessDeniedException("Only participants can " + action + " this DM.");
+            }
+        } else {
+            if (room.getCreator() == null || !room.getCreator().getId().equals(requesterId)) {
+                throw new AccessDeniedException("Only the room creator can " + action + " this room.");
+            }
+        }
+    }
+
+    /** Helper to standardize WebSocket payload emission */
+    private void broadcastGlobalEvent(String type, String roomId, Map<String, Object> additionalData) {
+        Map<String, Object> payload = new java.util.HashMap<>(additionalData);
+        payload.put("type", type);
+        payload.put("roomId", roomId);
+        messagingTemplate.convertAndSend("/topic/global-events", payload);
     }
 }

@@ -88,13 +88,16 @@ public class RedisStreamMessageBufferService extends MessageBufferService {
 
     @PostConstruct
     public void init() {
+        log.info("RedisStreamMessageBufferService initializing with stream key: {}", streamKey);
         RStream<String, String> stream = redissonClient.getStream(streamKey);
         try {
-            stream.createGroup(StreamCreateGroupArgs.name(consumerGroup).id(StreamMessageId.ALL));
+            stream.createGroup(StreamCreateGroupArgs.name(consumerGroup)
+                    .id(StreamMessageId.ALL)
+                    .makeStream());
         } catch (Exception e) {
-            log.debug("Consumer group {} initialization check: {}", consumerGroup, e.getMessage());
+            log.info("Consumer group {} already exists or error creating: {}", consumerGroup, e.getMessage());
         }
-
+        log.info("RedisStreamMessageBufferService initialized with consumerId: {}", consumerId);
         consumerExecutor.submit(this::consumeLoop);
     }
 
